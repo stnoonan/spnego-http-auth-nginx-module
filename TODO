@@ -1,0 +1,4 @@
+TODO
+----
+Change "auth_gss" to "auth_spnego" - this is probably more appropriate - mike503
+Test in various setups (currently cannot confirm this even works for me) - mike503
