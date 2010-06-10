@@ -1,9 +1,9 @@
 Nginx module to use SPNEGO+GSSAPI+Kerberos for HTTP authentication
 ==================================================================
 
-Foreword
---------
-Michael Shadle paid YoctoPectaBorg from RentACoder to develop this extension.
+Foreword From Mike
+------------------
+Michael Shadle paid YoctoPetaBorg from RentACoder to develop this extension.
 
 YPB's notes are what make up the rest of this document.
 
@@ -13,9 +13,6 @@ I (Michael Shadle) have tried to string replace and rename this to be called
 There may be some oddities due to this. Hopefully not.
 
 mike503@gmail.com
-
-EOM
-
 
 Whatsizit
 ---------
