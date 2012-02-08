@@ -16,6 +16,8 @@
 
 #include <krb5.h>
 
+#define krb5_get_err_text(context,code) error_message(code)
+
 /* #include <spnegohelp.h> */
 int parseNegTokenInit (const unsigned char *  negTokenInit,
                        size_t                 negTokenInitLength,
@@ -256,13 +258,18 @@ ngx_http_auth_spnego_init(ngx_conf_t *cf)
 static ngx_int_t
 ngx_http_auth_spnego_negotiate_headers(ngx_http_request_t *r,
 				    ngx_http_auth_spnego_ctx_t *ctx,
-				    ngx_str_t *token)
+				    ngx_str_t *token,
+				    ngx_http_auth_spnego_loc_conf_t *alcf)
 {
   ngx_str_t value = ngx_null_string;
+  ngx_str_t value2 = ngx_null_string;
 
   if (token == NULL) {
     value.len = sizeof("Negotiate") - 1;
     value.data = (u_char *) "Negotiate";
+    value2.len = sizeof("Basic realm=\"\"") + alcf->realm.len;
+    ngx_snprintf(value2.data, value2.len, "Basic realm=\"%V\"%Z",
+	       &alcf->realm);
   } else {
     value.len = sizeof("Negotiate") + token->len;
     value.data = ngx_pcalloc(r->pool, value.len + 1);
@@ -283,6 +290,20 @@ ngx_http_auth_spnego_negotiate_headers(ngx_http_request_t *r,
 
   r->headers_out.www_authenticate->value.len = value.len;
   r->headers_out.www_authenticate->value.data = value.data;
+
+  if (token == NULL) {
+    r->headers_out.www_authenticate = ngx_list_push(&r->headers_out.headers);
+    if (r->headers_out.www_authenticate == NULL) {
+      return NGX_ERROR;
+    }
+  
+    r->headers_out.www_authenticate->hash = 1;
+    r->headers_out.www_authenticate->key.len = sizeof("WWW-Authenticate") - 1;
+    r->headers_out.www_authenticate->key.data = (u_char *) "WWW-Authenticate";
+  
+    r->headers_out.www_authenticate->value.len = value2.len;
+    r->headers_out.www_authenticate->value.data = value2.data;
+  }
 
   ctx->head = 1;
 
@@ -352,6 +373,138 @@ ngx_http_auth_spnego_token(ngx_http_request_t *r,
 
   return NGX_OK;
 }
+
+ngx_int_t
+ngx_http_auth_spnego_basic(ngx_http_request_t *r,
+			ngx_http_auth_spnego_ctx_t *ctx,
+			ngx_http_auth_spnego_loc_conf_t *alcf
+			)
+{
+  /* not copying or decoding anything, just checking if token is present
+     and where? NOPE, koz ngx_decode_base64 uses ngx_str_t... so might as well... */
+
+  ngx_str_t host_name;
+  ngx_str_t service;  
+  ngx_str_t user; 
+
+  ngx_int_t ret = NGX_DECLINED;
+
+  krb5_context    kcontext = NULL;
+  krb5_error_code code;
+  krb5_principal  client = NULL;
+  krb5_principal  server = NULL;
+  krb5_creds creds;
+  krb5_get_init_creds_opt gic_options;
+  int             kret = 0;
+  char            *name = NULL;
+  char            *p = NULL;
+ 
+  code = krb5_init_context(&kcontext);
+  if (code) {
+    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+		 "Kerberos error: Cannot initialize kerberos context");
+    return NGX_ERROR;
+  }
+
+  /* TODECIDE: wherefrom use the hostname value for the service name? */
+  host_name = r->headers_in.host->value;
+  /* for now using the name client thinks... */
+  service.len = alcf->srvcname.len + host_name.len + 2;
+  /* @ vel / */
+  service.data = ngx_palloc(r->pool, service.len);
+  if (service.data == NULL) {
+    ret = NGX_ERROR;
+    goto end;
+  }
+  ngx_snprintf(service.data, service.len, "%V@%V%Z",
+	       &alcf->srvcname, &host_name);
+
+  kret = krb5_parse_name (kcontext, (const char *)service.data, &server);
+
+  if (kret) {
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+		  "Kerberos error:  Unable to parse service name ($service@$hostname)");
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+		  "Kerberos error:", krb5_get_err_text(kcontext, code));
+    ret = NGX_ERROR;
+    goto end;
+  }
+
+  code = krb5_unparse_name(kcontext, server, &name);
+  if (code) {
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+		  "Kerberos error: Cannot unparse servicename");
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+		  "Kerberos error:", krb5_get_err_text(kcontext, code));
+    ret = NGX_ERROR;
+    goto end;
+  }
+
+  free(name);
+  name=NULL;
+
+  p=ngx_strchr(r->headers_in.user.data, '@');
+  user.len=256;
+  user.data=ngx_palloc(r->pool, user.len);
+  if (p == NULL) {
+    ngx_snprintf(user.data, user.len, "%V@%V%Z", &r->headers_in.user, &alcf->realm);
+  } else {
+    ngx_snprintf(user.data, user.len, "%V%Z", &r->headers_in.user);
+  }
+  code = krb5_parse_name(kcontext, (const char *)user.data, &client);
+
+  if (code) {
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+		  "Kerberos error: Unable to parse username ($username@$realm)");
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+		  "Kerberos error:", krb5_get_err_text(kcontext, code));
+    ret = NGX_ERROR;
+    goto end;
+  }
+
+  memset(&creds, 0, sizeof(creds));
+
+  code = krb5_unparse_name(kcontext, client, &name);
+  if (code) {
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+		  "Kerberos error: Cannot unparse username");
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+		  "Kerberos error:", krb5_get_err_text(kcontext, code));
+    ret = NGX_ERROR;
+    goto end;
+  }
+  
+  krb5_get_init_creds_opt_init(&gic_options);
+  
+  code = krb5_get_init_creds_password(kcontext, &creds, client, (const char *)r->headers_in.passwd.data, NULL, NULL, 0, NULL, &gic_options);
+
+  krb5_free_cred_contents(kcontext, &creds);
+
+  if (code)
+  {
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+		  "Kerberos error: Credentials failed");
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+		  "Kerberos error:", krb5_get_err_text(kcontext, code));
+    ret = NGX_DECLINED;
+    goto end;
+  }
+  
+  ret = NGX_OK;
+
+end:
+
+  if (name)
+    free(name);
+  if (client)
+    krb5_free_principal(kcontext, client);
+  if (server)
+    krb5_free_principal(kcontext, server);
+  krb5_free_context(kcontext);
+
+  return ret;
+}
+
 
 /*
   Because 'remote_user' is assumed to be provided by basic authorization
@@ -605,7 +758,7 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t *r,
 
     /* and now here we had to rework ngx_http_auth_spnego_negotiate_headers... */
 
-    if ( (ret = ngx_http_auth_spnego_negotiate_headers(r, ctx, &token)) == NGX_ERROR ) {
+    if ( (ret = ngx_http_auth_spnego_negotiate_headers(r, ctx, &token, alcf)) == NGX_ERROR ) {
       goto end;
     }
     /*    ap_table_set(r->err_headers_out, "WWW-Authenticate",
@@ -756,7 +909,12 @@ ngx_http_auth_spnego_handler(ngx_http_request_t *r)
   if (r->headers_in.user.data != NULL)
     return NGX_OK;
 
-  ret = ngx_http_auth_spnego_token(r, ctx);
+  ret = ngx_http_auth_basic_user(r);
+  if (ret == NGX_OK) {
+    return ngx_http_auth_spnego_basic(r, ctx, alcf);
+  } else {
+    ret = ngx_http_auth_spnego_token(r, ctx);
+  }
 
   if (ret == NGX_OK) {
     /* ok... looks like client sent some Negotiate'ing authorization header... */
@@ -765,7 +923,7 @@ ngx_http_auth_spnego_handler(ngx_http_request_t *r)
 
   if (ret == NGX_DECLINED) {
     /* TODEBATE skip if (ctx->head)... */
-    ret = ngx_http_auth_spnego_negotiate_headers(r, ctx, NULL);
+    ret = ngx_http_auth_spnego_negotiate_headers(r, ctx, NULL, alcf);
     if (ret == NGX_ERROR) {
       return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
     }
