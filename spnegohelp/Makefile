@@ -27,6 +27,9 @@ AIX:
 Linux:
 	make CFLAGS="$(CFLAGS) -D__LITTLE_ENDIAN__" libs
 
+FreeBSD:
+	make CFLAGS="$(CFLAGS) -D__LITTLE_ENDIAN__" libs
+
 libs: $(LIB) $(SLIB)
 
 $(LIB): $(OBJS)
