@@ -268,7 +268,11 @@ ngx_http_auth_spnego_negotiate_headers(ngx_http_request_t *r,
     value.len = sizeof("Negotiate") - 1;
     value.data = (u_char *) "Negotiate";
     value2.len = sizeof("Basic realm=\"\"") + alcf->realm.len;
-    ngx_snprintf(value2.data, value2.len, "Basic realm=\"%V\"%Z",
+    value2.data = ngx_pcalloc(r->pool, value2.len + 1);
+    if (value2.data == NULL) {
+      return NGX_ERROR;
+    }
+    ngx_snprintf(value2.data, value2.len + 1, "Basic realm=\"%V\"%Z",
 	       &alcf->realm);
   } else {
     value.len = sizeof("Negotiate") + token->len;
