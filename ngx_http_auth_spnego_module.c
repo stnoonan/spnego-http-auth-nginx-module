@@ -476,7 +476,7 @@ ngx_http_auth_spnego_basic(ngx_http_request_t *r,
   
   krb5_get_init_creds_opt_init(&gic_options);
   
-  code = krb5_get_init_creds_password(kcontext, &creds, client, (const char *)r->headers_in.passwd.data, NULL, NULL, 0, NULL, &gic_options);
+  code = krb5_get_init_creds_password(kcontext, &creds, client, (char *)r->headers_in.passwd.data, NULL, NULL, 0, NULL, &gic_options);
 
   krb5_free_cred_contents(kcontext, &creds);
 
