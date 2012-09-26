@@ -1,155 +1,93 @@
-commit 432a3e858970da65b8733160845d3ae86e01a90b
-Author: Yoctopetaborg <superflouosATgmailDOTcom>
-Date:   Sat Oct 31 05:09:44 2009 +0100
+commit fc2a777d4eb65d9f3bf14f3d6fac1a7d21f94a6a
+Author: Sean Noonan <sean.noonan@twosigma.com>
+Date:   Wed Sep 26 20:46:37 2012 +0000
 
-    main and srv config: it can not be that easy
+    fixes GSS Negotiate fallback; reformat code for consistency
 
-commit a6575bb2c360321426c65aedd58c8a09941d97a4
-Author: Yoctopetaborg <superflouosATgmailDOTcom>
-Date:   Wed Sep 16 03:49:57 2009 +0200
+commit 0cd52c0a5ac46591b0a59b117c37939ec034ac27
+Author: Sean Noonan <sean.noonan@twosigma.com>
+Date:   Wed Sep 26 18:56:35 2012 +0000
 
-    add auth_gss_format_full option flag handling (i.e. FQUN)
+    NULL ==
 
-commit a1bb7ae1e23216c04bcb6dc037e8d9c2f9832b51
-Author: Yoctopetaborg <superflouosATgmailDOTcom>
-Date:   Sat Jun 6 01:41:07 2009 +0200
+commit 68ef07d74e62d04e7c07d5021c7a220a71ee63c4
+Author: Sean Noonan <sean.noonan@twosigma.com>
+Date:   Wed Sep 26 18:26:09 2012 +0000
 
-    ngx_snprintf with %V takes pointer to ngx_str_t, doh
+    replace references to unsigned char with u_char since we have it
 
-commit a3a7c329fb966d35e9ef86f8d914490c852ef5dc
-Author: Yoctopetaborg <superflouosATgmailDOTcom>
-Date:   Sat Jun 6 00:35:03 2009 +0200
+commit 6f2a2bb8eca53d11844aa83ba50ef43968c0ce98
+Author: Sean Noonan <sean.noonan@twosigma.com>
+Date:   Wed Sep 26 17:30:44 2012 +0000
 
-    ngx_encode_base64 is void, doh
+    Revert changes that required gss_nt_krb5_name instead of GSS_C_NT_HOSTBASED_SERVICE
 
-commit 893937a96ce7074bc8fd4dc10af70801df0cdf43
-Author: Yoctopetaborg <superflouosATgmailDOTcom>
-Date:   Sat Jun 6 00:30:26 2009 +0200
+commit 3ed44df57ae51cf2595550acbe65ec6ecb6d2f76
+Author: Sean Noonan <sean.noonan@twosigma.com>
+Date:   Wed Sep 26 17:12:44 2012 +0000
 
-    Redundant header manipulation
+    Work properly when run on non-standard ports
 
-commit 6ebe58b720f61c9fc67e424e946290c7b9ef0aef
-Author: Yoctopetaborg <superflouosATgmailDOTcom>
-Date:   Sun Mar 22 03:56:55 2009 +0100
+commit 117fbd8b11b9c153fc909797cbae43407f52a754
+Author: Pavel Plesov <pavel.plesov@gmail.com>
+Date:   Wed Feb 15 17:58:35 2012 +0400
 
-    version 0.0.3
+    Fix memory allocation in Basic auth
 
-commit 936722b37c261e69224d3b865e9fd66a81028ea6
-Author: Yoctopetaborg <superflouosATgmailDOTcom>
-Date:   Sun Mar 22 03:45:44 2009 +0100
+commit c2035a7b1c900491fb3df2ea50f52fcb34f6be2f
+Author: Pavel Plesov <pavel.plesov@gmail.com>
+Date:   Wed Feb 15 17:40:20 2012 +0400
 
-    final touches up
+    Fix build and link with MIT Kerberos 1.9.2
 
-commit 2b817cc4bd9ab246f46270736acb25eb6a05aee6
-Author: Yoctopetaborg <superflouosATgmailDOTcom>
-Date:   Sun Mar 22 02:21:46 2009 +0100
+commit 6c4193f009614c047f94b68b8e1b0c2ef806836d
+Merge: 3cfbb2d 8ac7acf
+Author: Pavel Plesov <pavel.plesov@gmail.com>
+Date:   Wed Feb 15 18:11:41 2012 +0400
 
-    including spnegohelp third party lib source files
+    Merge remote-tracking branch 'muhgatus/master'
 
-commit 03ff04524bc2d5560bd9b169b6bd5d562422c8b0
-Author: Yoctopetaborg <superflouosATgmailDOTcom>
-Date:   Sun Mar 22 02:16:44 2009 +0100
+commit 3cfbb2d04d992ab69dd51f49bde9827aa4f88693
+Author: Pavel Plesov <pavel.plesov@gmail.com>
+Date:   Wed Feb 15 17:35:29 2012 +0400
 
-    gss_buffer_desc.length contains null
+    Fix link with local build of spnegohelp
 
-commit 79c33aae1d7d430eeee8b9817be8524c29acadb1
-Author: Yoctopetaborg <superflouosATgmailDOTcom>
-Date:   Sat Mar 21 20:24:14 2009 +0100
+commit 06a9a5feffd8fb164c188f7ffbea40351672df3b
+Merge: d96a011 8c18ff7
+Author: Pavel Plesov <pavel.plesov@gmail.com>
+Date:   Wed Feb 15 18:07:35 2012 +0400
 
-    perhaps if user set
+    Merge remote-tracking branch 'solj/master'
 
-commit d5c9297a7ce40040810a8a2d93775373be2f2022
-Author: Yoctopetaborg <superflouosATgmailDOTcom>
-Date:   Sat Mar 21 20:09:40 2009 +0100
+commit d96a011d9561bd2a7845e17f4b89309d7c064d8f
+Author: Pavel Plesov <pavel.plesov@gmail.com>
+Date:   Wed Feb 15 13:54:53 2012 +0400
 
-    unbelievable
+    Add FreeBSD to build configuration
 
-commit d67fc0fd3c9e6c6363500a31bc9f96e542975a69
-Author: Yoctopetaborg <superflouosATgmailDOTcom>
-Date:   Sat Mar 21 19:46:10 2009 +0100
+commit 8ac7acf97196c7f8233b88ddabbef1e132182698
+Author: muhgatus <github@abraumhal.de>
+Date:   Wed Feb 8 10:02:14 2012 +0100
 
-    now it should freaking work
+    added basic auth via kerberos
 
-commit 3312ab4ac9ff7664a4a505a4f6d664acee5274eb
-Author: Yoctopetaborg <superflouosATgmailDOTcom>
-Date:   Sat Mar 21 04:41:03 2009 +0100
+commit 8c18ff7bd857ba838ee4136663165ee6e646d001
+Author: Sol Jerome <sol.jerome@gmail.com>
+Date:   Thu Sep 29 17:25:09 2011 -0500
 
-    version 0.0.2
+    gitignore: Ignore non-source files
+    
+    Signed-off-by: Sol Jerome <sol.jerome@gmail.com>
 
-commit 5f3a5d22c9b4e4b6069be9eeddea564efe9e2d47
-Author: Yoctopetaborg <superflouosATgmailDOTcom>
-Date:   Sat Mar 21 04:21:55 2009 +0100
+commit ba87108541e7b2b1e9470265b74ef93a43f811cf
+Author: Michael Shadle <mike503@gmail.com>
+Date:   Thu Jun 10 02:01:36 2010 -0700
 
-    ngx_fubarprintf: jeezus H krist
+    Minor typo in README
 
-commit 8b9a26b9c0135aaff3a98730f2b7ec9592d8885c
-Author: Yoctopetaborg <superflouosATgmailDOTcom>
-Date:   Sat Mar 21 02:35:01 2009 +0100
+commit 27ff31a356dad663dcc480f9b088520af9ba165a
+Author: Michael Shadle <mike503@gmail.com>
+Date:   Thu Jun 10 01:56:50 2010 -0700
 
-    defixes: u_(c)har H'AR H'AR! (matee)
-
-commit 2e1c1e2d4db307015d5afa430d286d2a2bca5454
-Author: Yoctopetaborg <superflouosATgmailDOTcom>
-Date:   Fri Mar 20 04:52:16 2009 +0100
-
-    debug: GSSAPI authorizing
-
-commit 6c5dc957c8addcc13781efe6bc21aa2447044772
-Author: Yoctopetaborg <superflouosATgmailDOTcom>
-Date:   Fri Mar 20 04:42:46 2009 +0100
-
-    debug: Token decoded
-
-commit 4ef147337cf52d66211d1ea073f8080146844f54
-Author: Yoctopetaborg <superflouosATgmailDOTcom>
-Date:   Fri Mar 20 04:11:20 2009 +0100
-
-    compiles, but SIGSEGVs
-
-commit 6ca762d32489399bec1a95f62377d26c75c0588d
-Author: Yoctopetaborg <superflouosATgmailDOTcom>
-Date:   Fri Mar 20 00:49:00 2009 +0100
-
-    compile, may be, auth
-
-commit 8da2c1a5538a6f4136f6d498c8ce4a0f8a225e77
-Author: Yoctopetaborg <superflouosATgmailDOTcom>
-Date:   Mon Mar 16 02:46:56 2009 +0100
-
-    negotiate, negotiate, negotiate
-
-commit 9c4838f5b15bc2222a0c071761c78324f5852514
-Author: Yoctopetaborg <superflouosATgmailDOTcom>
-Date:   Tue Feb 24 01:42:30 2009 +0100
-
-    %X -> %p, wtf
-
-commit 987043b517f664f31b537eb182a74e49c9b8c4e4
-Author: Yoctopetaborg <superflouosATgmailDOTcom>
-Date:   Sun Feb 22 23:54:27 2009 +0100
-
-    flag it baby
-
-commit db2ed27c9bd2c3a2e96d825dbc4f104be82a4091
-Author: Yoctopetaborg <superflouosATgmailDOTcom>
-Date:   Sun Feb 22 04:05:14 2009 +0100
-
-    OK, perhaps now no err... warnings
-
-commit 4a9d3a012379a787d8b921776757eb9b9832111e
-Author: Yoctopetaborg <superflouosATgmailDOTcom>
-Date:   Sat Feb 21 09:25:26 2009 +0100
-
-    not track ChangeLog, sort-of 0.0.0 version
-
-commit f310300f91e34f1d4131d1509b7d686bc300a733
-Author: Yoctopetaborg <superflouosATgmailDOTcom>
-Date:   Sat Feb 21 04:56:30 2009 +0100
-
-    To track or not to track ChangeLog, silly archive
-
-commit 8a1c076a05eed0d47a24d9c7a64ce3ff2854fdaf
-Author: Yoctopetaborg <superflouosATgmailDOTcom>
-Date:   Sat Feb 21 04:46:59 2009 +0100
-
-    Initial commit
+    initial commit, please read README!

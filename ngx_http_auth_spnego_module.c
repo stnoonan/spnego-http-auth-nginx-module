@@ -1,7 +1,27 @@
-/*
+/* 
  * Copyright (C) 2009 Michal Kowalski <superflouos{at}gmail[dot]com>
+ * Copyright (C) 2012 Sean Timothy Noonan <stnoonan@obsolescence.net>
  *
- * Blah, blah, blah...
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
  *
  */
 
@@ -24,8 +44,6 @@
         NGX_LOG_DEBUG_HTTP, r->connection->log, 0, msg, one, two, three)
 #define spnego_log_error(fmt, args...) ngx_log_error(\
         NGX_LOG_ERR, r->connection->log, 0, fmt, ##args)
-
-#include <spnegohelp.h>
 
 /* Module handler */
 static ngx_int_t ngx_http_auth_spnego_handler(ngx_http_request_t *);
@@ -531,9 +549,6 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t * r,
     /* kerberos stuff */
     krb5_context krb_ctx = NULL;
     char *ktname = NULL;
-    /* ngx_str_t kerberosToken; ? */
-    u_char *kerberosToken = NULL;
-    size_t kerberosTokenLength = 0;
     ngx_str_t spnegoToken = ngx_null_string;
 
     /* gssapi stuff */
@@ -630,33 +645,6 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t * r,
     input_token.length = ctx->token.len;
     input_token.value = (void *) ctx->token.data;
 
-    rc = parseNegTokenInit(input_token.value, input_token.length,
-            (const u_char **) &kerberosToken, &kerberosTokenLength);
-    if (rc != 0) {
-        spnego_debug1("parseNegTokenInit failed with rc=%d", rc);
-        /* Error 1xy -> assume GSSAPI token and continue */
-        if (rc < 100 || rc > 199) {
-            spnego_error(NGX_DECLINED);
-        }
-        /* NTLM is not supported */
-        if ((input_token.length >= sizeof(ntlmProtocol) + 1) &&
-                (!ngx_memcmp(input_token.value,
-                             ntlmProtocol, sizeof(ntlmProtocol)))) {
-            spnego_debug1("received type %d NTLM token",
-                    (int) *((u_char *) input_token.value + sizeof(ntlmProtocol)));
-            spnego_error(NGX_DECLINED);
-        }
-        spnego_flag = 0;
-    } else {
-        input_token.length = kerberosTokenLength;
-        input_token.value = ngx_pcalloc(r->pool, input_token.length);
-        if (NULL == input_token.value) {
-            spnego_error(NGX_ERROR);
-        }
-        ngx_memcpy(input_token.value, kerberosToken, input_token.length);
-        spnego_flag = 1;
-    }
-
     major_status = gss_accept_sec_context(&minor_status, &gss_context,
             my_gss_creds, &input_token, GSS_C_NO_CHANNEL_BINDINGS, &client_name,
             NULL, &output_token, &ret_flags, NULL, &delegated_cred);
@@ -675,18 +663,9 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t * r,
     if (output_token.length) {
         ngx_str_t token = ngx_null_string;
 
-        if (spnego_flag) {
-            rc = makeNegTokenTarg(output_token.value, output_token.length,
-                    (const u_char **) &spnegoToken.data, &spnegoToken.len);
-            if (rc != 0) {
-                spnego_debug1("makeNegTokenTarg failed with rc=%d", rc);
-                spnego_error(NGX_DECLINED);
-            }
-        } else {
-            spnego_debug0("Treating input token as spnegoToken");
-            spnegoToken.data = (u_char *) output_token.value;
-            spnegoToken.len = output_token.length - 1;
-        }
+        spnegoToken.data = (u_char *) output_token.value;
+        spnegoToken.len = output_token.length - 1;
+
         token.len = ngx_base64_encoded_length(spnegoToken.len);
         token.data = ngx_pcalloc(r->pool, token.len + 1);
         if (NULL == token.data) {
@@ -746,7 +725,6 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t * r,
 
         /* this for the sake of ngx_http_variable_remote_user */
         ngx_http_auth_spnego_set_bogus_authorization(r);
-
         spnego_debug1("user is %V", &r->headers_in.user);
     }
 
@@ -760,7 +738,6 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t * r,
     ret = NGX_OK;
     goto end;
 
-    /* well, alright, the end, my friend */
 end:
     if (delegated_cred)
         gss_release_cred(&minor_status, &delegated_cred);
