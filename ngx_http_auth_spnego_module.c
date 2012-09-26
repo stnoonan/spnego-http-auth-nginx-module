@@ -8,25 +8,14 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
-/*
-#include <ngx_string.h>
-*/
 
 #include <gssapi/gssapi.h>
-
+#include <gssapi/gssapi_krb5.h>
 #include <krb5.h>
 
 #define krb5_get_err_text(context,code) error_message(code)
 
-/* #include <spnegohelp.h> */
-int parseNegTokenInit (const unsigned char *  negTokenInit,
-                       size_t                 negTokenInitLength,
-                       const unsigned char ** kerberosToken,
-                       size_t *               kerberosTokenLength);
-int makeNegTokenTarg (const unsigned char *  kerberosToken,
-                      size_t                 kerberosTokenLength,
-                      const unsigned char ** negTokenTarg,
-                      size_t *               negTokenTargLength);
+#include <spnegohelp.h>
 
 /* Module handler */
 static ngx_int_t ngx_http_auth_spnego_handler(ngx_http_request_t*);
@@ -48,20 +37,13 @@ get_gss_error(ngx_pool_t *p,
    size_t len;
    ngx_str_t str;
 
-   /* ngx_fubarprintf... what a hack... %Z inserts '\0' */
+   /* %Z inserts '\0' */
    ngx_snprintf((u_char *) buf, sizeof(buf), "%s: %Z", prefix);
    len = ngx_strlen(buf);
    do {
-      maj_stat = gss_display_status (&min_stat,
-	                             error_status,
-				     GSS_C_MECH_CODE,
-				     GSS_C_NO_OID,
-				     &msg_ctx,
-				     &status_string);
+      maj_stat = gss_display_status (&min_stat, error_status, GSS_C_MECH_CODE,
+				     GSS_C_NO_OID, &msg_ctx, &status_string);
       if (sizeof(buf) > len + status_string.length + 1) {
-/*
-         sprintf(buf, "%s:", (char*) status_string.value);
-*/
          ngx_sprintf((u_char *) buf+len, "%s:%Z", (char*) status_string.value);
          len += ( status_string.length + 1);
       }
@@ -141,6 +123,8 @@ static ngx_command_t ngx_http_auth_spnego_commands[] = {
     offsetof(ngx_http_auth_spnego_loc_conf_t, fqun),
     NULL },
 
+  /* TODO add support for specifying auth_gss_spn explicitely */
+
   ngx_null_command
 };
 
@@ -162,7 +146,6 @@ static ngx_http_module_t ngx_http_auth_spnego_module_ctx = {
 
 /* Module Definition */
 
-/* really ngx_module_s /shrug */
 ngx_module_t ngx_http_auth_spnego_module = {
   /* ngx_uint_t ctx_index, index, spare{0-3}, version; */
   NGX_MODULE_V1, /* 0, 0, 0, 0, 0, 0, 1 */
@@ -193,13 +176,6 @@ ngx_http_auth_spnego_create_loc_conf(ngx_conf_t *cf)
   conf->protect = NGX_CONF_UNSET;
   conf->fqun = NGX_CONF_UNSET;
 
-  /* temporary "debug" */
-#if (NGX_DEBUG)
-  ngx_conf_log_error(NGX_LOG_INFO, cf, 0,
-		     "auth_spnego: allocated loc_conf_t (0x%p)", conf);
-#endif
-  /* TODO find out if there is way to enable it only in debug mode */
-
   return conf;
 }
 
@@ -220,7 +196,6 @@ ngx_http_auth_spnego_merge_loc_conf(ngx_conf_t *cf,
 
   ngx_conf_merge_off_value(conf->fqun, prev->fqun, 0);
 
-  /* TODO make it only shout in debug */
 #if (NGX_DEBUG)
   ngx_conf_log_error(NGX_LOG_INFO, cf, 0, "auth_spnego: protect = %i",
 		     conf->protect);
@@ -261,26 +236,24 @@ ngx_http_auth_spnego_negotiate_headers(ngx_http_request_t *r,
 				    ngx_str_t *token,
 				    ngx_http_auth_spnego_loc_conf_t *alcf)
 {
+  /* The string handling here is inconsistent. Should we be including the NUL
+   * or not? My feeling is not, given that these are all ngx_str_t with defined
+   * length.
+   *
+   * TODO: Fix string lengths to be consistent about NUL termination
+   */
   ngx_str_t value = ngx_null_string;
-  ngx_str_t value2 = ngx_null_string;
 
   if (token == NULL) {
     value.len = sizeof("Negotiate") - 1;
     value.data = (u_char *) "Negotiate";
-    value2.len = sizeof("Basic realm=\"\"") + alcf->realm.len;
-    value2.data = ngx_pcalloc(r->pool, value2.len + 1);
-    if (value2.data == NULL) {
-      return NGX_ERROR;
-    }
-    ngx_snprintf(value2.data, value2.len + 1, "Basic realm=\"%V\"%Z",
-	       &alcf->realm);
   } else {
-    value.len = sizeof("Negotiate") + token->len;
-    value.data = ngx_pcalloc(r->pool, value.len + 1);
+    value.len = sizeof("Negotiate") + token->len; //space accounts for \0
+    value.data = ngx_pcalloc(r->pool, value.len);
     if (value.data == NULL) {
       return NGX_ERROR;
     }
-    ngx_snprintf(value.data, value.len + 1, "Negotiate %V", token);
+    ngx_snprintf(value.data, value.len, "Negotiate %V", token);
   }
 
   r->headers_out.www_authenticate = ngx_list_push(&r->headers_out.headers);
@@ -295,7 +268,15 @@ ngx_http_auth_spnego_negotiate_headers(ngx_http_request_t *r,
   r->headers_out.www_authenticate->value.len = value.len;
   r->headers_out.www_authenticate->value.data = value.data;
 
+  /* Basic auth */
   if (token == NULL) {
+    ngx_str_t value2 = ngx_null_string;
+    value2.len = sizeof("Basic realm=\"\"") - 1 + alcf->realm.len;
+    value2.data = ngx_pcalloc(r->pool, value2.len);
+    if (value2.data == NULL) {
+      return NGX_ERROR;
+    }
+    ngx_snprintf(value2.data, value2.len, "Basic realm=\"%V\"", &alcf->realm);
     r->headers_out.www_authenticate = ngx_list_push(&r->headers_out.headers);
     if (r->headers_out.www_authenticate == NULL) {
       return NGX_ERROR;
@@ -314,7 +295,6 @@ ngx_http_auth_spnego_negotiate_headers(ngx_http_request_t *r,
   return NGX_OK;
 }
 
-/* sort of like ngx_http_auth_basic_user ... except we store in ctx_t? */
 ngx_int_t
 ngx_http_auth_spnego_token(ngx_http_request_t *r,
 			ngx_http_auth_spnego_ctx_t *ctx)
@@ -566,32 +546,22 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t *r,
 {
   static unsigned char ntlmProtocol [] = {'N', 'T', 'L', 'M', 'S', 'S', 'P', 0};
 
-  /*
-    nginx stuff
-  */
+  /* nginx stuff */
   ngx_str_t host_name;
   ngx_int_t ret = NGX_DECLINED;
   int rc;
   int spnego_flag = 0;
   char *p;
-  /*
-    kerberos stuff
-  */
+
+  /* kerberos stuff */
   krb5_context krb_ctx = NULL;
   char *ktname = NULL;
   /* ngx_str_t kerberosToken; ? */
   unsigned char *kerberosToken = NULL;
   size_t kerberosTokenLength = 0;
-  /* this izgotten from de-SPNEGGING original token...
-     and put into gss_accept_sec_context...
-     silly...
-   */
   ngx_str_t spnegoToken = ngx_null_string;
-  /* unsigned char *spnegoToken = NULL ;
-     size_t spnegoTokenLength = 0; */
-  /*
-    gssapi stuff
-  */
+
+  /* gssapi stuff */
   OM_uint32 major_status, minor_status, minor_status2;
   gss_buffer_desc service = GSS_C_EMPTY_BUFFER;
   gss_name_t my_gss_name = GSS_C_NO_NAME;
@@ -603,19 +573,16 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t *r,
   OM_uint32 ret_flags = 0;
   gss_cred_id_t delegated_cred = GSS_C_NO_CREDENTIAL;
 
-  /* first, see if there is a point in runing */
-/*   ctx = ngx_http_get_module_ctx(r, ngx_http_auth_spnego_module); */
-  /* this really shouldn't 'eppen */
-  if (!ctx || ctx->token.len == 0) {
+  if (NULL == ctx || ctx->token.len == 0)
     return ret;
-  }
-  /* on with the copy cat show */
+
   ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-		 "GSSAPI authorizing");
+          "GSSAPI authorizing");
 
   krb5_init_context(&krb_ctx);
 
-  ktname = (char *) ngx_pcalloc(r->pool, sizeof("KRB5_KTNAME=")+alcf->keytab.len);
+  ktname = (char *) ngx_pcalloc(r->pool, sizeof("KRB5_KTNAME=") +
+          alcf->keytab.len);
   if (ktname == NULL) {
     ret = NGX_ERROR;
     goto end;
@@ -627,48 +594,64 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t *r,
   ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
 		 "Use keytab %V", &alcf->keytab);
 
-  /* TODECIDE: wherefrom use the hostname value for the service name? */
+  /* The required logic here is to choose between these options:
+   * 1. Use the service as specified in the config? Not yet implemented
+   * 2. Use the service as expected by the client? (gss_OID)gss_nt_krb5_name
+   * 3. Allow the library to canonicalize the name? GSS_C_NT_HOSTBASED_SERVICE */
   host_name = r->headers_in.host->value;
-  /* for now using the name client thinks... */
-  service.length = alcf->srvcname.len + host_name.len + 2;
-  /* @ vel / */
+  u_char *port_start = (u_char *)ngx_strchr(host_name.data, ':');
+  uint real_host_name_len = 0;
+  if (NULL == port_start) { /* no port number specified */
+      service.length = alcf->srvcname.len + host_name.len + 2;
+      real_host_name_len = host_name.len;
+  } else { /* port number included, strip it */
+      service.length = alcf->srvcname.len + (port_start - host_name.data - 1) + 2;
+      real_host_name_len = (port_start - host_name.data);
+  }
+
   service.value = ngx_palloc(r->pool, service.length);
   if (service.value == NULL) {
     ret = NGX_ERROR;
     goto end;
   }
-  ngx_snprintf(service.value, service.length, "%V@%V%Z",
-	       &alcf->srvcname, &host_name);
 
-  ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-		 "Use service principal %V/%V", &alcf->srvcname, &host_name);
+  ngx_snprintf(service.value, service.length, "%V/%V", &alcf->srvcname,
+          &host_name);
+  ngx_snprintf((u_char *)service.value + service.length, 1, "%Z");
+  ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+		 "Using service principal: %s", service.value);
 
   major_status = gss_import_name(&minor_status, &service,
-                                 GSS_C_NT_HOSTBASED_SERVICE, &my_gss_name);
+          (gss_OID)gss_nt_krb5_name, &my_gss_name);
+//          GSS_C_NT_HOSTBASED_SERVICE, &my_gss_name);
   if (GSS_ERROR(major_status)) {
-    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-		  "%s Used service principal: %s",
-		  get_gss_error(r->pool, minor_status,
-				"gss_import_name() failed for service principal"),
-		  (unsigned char *)service.value);
-    ret = NGX_ERROR;
-    goto end;
+      ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+              "%s Used service principal: %s ", get_gss_error(r->pool, minor_status,
+                  "gss_import_name() failed for service principal"),
+              (u_char *)service.value);
+      ret = NGX_ERROR;
+      goto end;
   }
 
-  major_status = gss_acquire_cred(&minor_status,
-				  my_gss_name,
-				  GSS_C_INDEFINITE,
-				  GSS_C_NO_OID_SET,
-				  GSS_C_ACCEPT,
-				  &my_gss_creds,
-				  NULL,
-				  NULL);
+  /* Log the credentials we plan to use */
+  gss_buffer_desc human_readable_gss_name = GSS_C_EMPTY_BUFFER;
+  major_status = gss_display_name(&minor_status, my_gss_name,
+          &human_readable_gss_name, NULL);
+
+  if (GSS_ERROR(major_status)) {
+      ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "%s", get_gss_error(
+                  r->pool, minor_status, "gss_display_name() failed"));
+  }
+  ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, "my_gss_name %s",
+          human_readable_gss_name.value);
+
+  /* Obtain credentials */
+  major_status = gss_acquire_cred(&minor_status, my_gss_name, GSS_C_INDEFINITE,
+				  GSS_C_NO_OID_SET, GSS_C_ACCEPT, &my_gss_creds, NULL, NULL);
   if (GSS_ERROR(major_status)) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-		  "%s Used service principal: %s",
-		  get_gss_error(r->pool, minor_status,
-				"gss_acquire_cred() failed"),
-		  (unsigned char *)service.value);
+		  "%s Used service principal: %s", get_gss_error(r->pool, minor_status,
+				"gss_acquire_cred() failed"), (unsigned char *)service.value);
     ret = NGX_ERROR;
     goto end;
   }
