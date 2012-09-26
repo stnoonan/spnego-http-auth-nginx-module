@@ -10,7 +10,6 @@
 #include <ngx_http.h>
 
 #include <gssapi/gssapi.h>
-#include <gssapi/gssapi_krb5.h>
 #include <krb5.h>
 
 #define krb5_get_err_text(context,code) error_message(code)
@@ -594,10 +593,7 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t *r,
   ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
 		 "Use keytab %V", &alcf->keytab);
 
-  /* The required logic here is to choose between these options:
-   * 1. Use the service as specified in the config? Not yet implemented
-   * 2. Use the service as expected by the client? (gss_OID)gss_nt_krb5_name
-   * 3. Allow the library to canonicalize the name? GSS_C_NT_HOSTBASED_SERVICE */
+  /* Use the SPN as expected by the client assuming HTTP/http_host */
   host_name = r->headers_in.host->value;
   u_char *port_start = (u_char *)ngx_strchr(host_name.data, ':');
   uint real_host_name_len = 0;
@@ -615,15 +611,14 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t *r,
     goto end;
   }
 
-  ngx_snprintf(service.value, service.length, "%V/%V", &alcf->srvcname,
+  ngx_snprintf(service.value, service.length, "%V@%V", &alcf->srvcname,
           &host_name);
   ngx_snprintf((u_char *)service.value + service.length, 1, "%Z");
   ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
 		 "Using service principal: %s", service.value);
 
   major_status = gss_import_name(&minor_status, &service,
-          (gss_OID)gss_nt_krb5_name, &my_gss_name);
-//          GSS_C_NT_HOSTBASED_SERVICE, &my_gss_name);
+          GSS_C_NT_HOSTBASED_SERVICE, &my_gss_name);
   if (GSS_ERROR(major_status)) {
       ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
               "%s Used service principal: %s ", get_gss_error(r->pool, minor_status,
@@ -727,7 +722,6 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t *r,
       spnegoToken.data = (u_char *) output_token.value;
       spnegoToken.len = output_token.length - 1;
     }
-    /* XXX use ap_uuencode() */
     token.len = ngx_base64_encoded_length(spnegoToken.len);
     token.data = ngx_pcalloc(r->pool, token.len + 1);
     if (token.data == NULL) {
@@ -745,7 +739,8 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t *r,
 
     /* and now here we had to rework ngx_http_auth_spnego_negotiate_headers... */
 
-    if ( (ret = ngx_http_auth_spnego_negotiate_headers(r, ctx, &token, alcf)) == NGX_ERROR ) {
+    if ((ret = ngx_http_auth_spnego_negotiate_headers(r, ctx, &token, alcf))
+            == NGX_ERROR) {
       goto end;
     }
     /*    ap_table_set(r->err_headers_out, "WWW-Authenticate",
