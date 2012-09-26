@@ -543,7 +543,7 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t *r,
 				ngx_http_auth_spnego_ctx_t *ctx,
 				ngx_http_auth_spnego_loc_conf_t *alcf)
 {
-  static unsigned char ntlmProtocol [] = {'N', 'T', 'L', 'M', 'S', 'S', 'P', 0};
+  static u_char ntlmProtocol [] = {'N', 'T', 'L', 'M', 'S', 'S', 'P', 0};
 
   /* nginx stuff */
   ngx_str_t host_name;
@@ -556,7 +556,7 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t *r,
   krb5_context krb_ctx = NULL;
   char *ktname = NULL;
   /* ngx_str_t kerberosToken; ? */
-  unsigned char *kerberosToken = NULL;
+  u_char *kerberosToken = NULL;
   size_t kerberosTokenLength = 0;
   ngx_str_t spnegoToken = ngx_null_string;
 
@@ -646,7 +646,7 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t *r,
   if (GSS_ERROR(major_status)) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
 		  "%s Used service principal: %s", get_gss_error(r->pool, minor_status,
-				"gss_acquire_cred() failed"), (unsigned char *)service.value);
+				"gss_acquire_cred() failed"), (u_char *)service.value);
     ret = NGX_ERROR;
     goto end;
   }
@@ -657,9 +657,8 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t *r,
   /* Should check first if SPNEGO token */
   /* but it looks like mit-kerberos version > 1.4.4 DOES include GSSAPI
      code that supports SPNEGO... ("donated by SUN")... */
-  if ( (rc = parseNegTokenInit (input_token.value,
-			       input_token.length,
-			       (const unsigned char **) &kerberosToken,
+  if ((rc = parseNegTokenInit(input_token.value, input_token.length,
+                  (const u_char **) &kerberosToken,
 			       &kerberosTokenLength)) != 0 ) {
 
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
@@ -677,7 +676,7 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t *r,
 	 (!ngx_memcmp(input_token.value, ntlmProtocol, sizeof ntlmProtocol)) ) {
       ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
 		     "received type %d NTLM token",
-		     (int) *((unsigned char *)input_token.value + sizeof ntlmProtocol)); /* jeez */
+		     (int) *((u_char *)input_token.value + sizeof ntlmProtocol)); /* jeez */
       ret = NGX_DECLINED;
       goto end;
     }
@@ -711,7 +710,7 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t *r,
     if (spnego_flag) {
       if ( (rc = makeNegTokenTarg (output_token.value,
 				  output_token.length,
-				  (const unsigned char **) &spnegoToken.data,
+				  (const u_char **) &spnegoToken.data,
 				  &spnegoToken.len)) != 0 ) {
 	ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
 		       "makeNegTokenTarg failed with rc=%d",rc);
@@ -754,7 +753,7 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t *r,
 		   "%s Used service principal: %s",
 		   get_gss_error(r->pool, minor_status,
 				 "gss_accept_sec_context() failed"),
-		   (unsigned char *)service.value);
+		   (u_char *)service.value);
     ret = NGX_DECLINED;
     goto end;
   }
