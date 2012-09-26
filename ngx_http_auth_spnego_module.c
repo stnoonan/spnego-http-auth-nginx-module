@@ -536,14 +536,9 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t * r,
         ngx_http_auth_spnego_ctx_t * ctx,
         ngx_http_auth_spnego_loc_conf_t * alcf)
 {
-    static u_char ntlmProtocol[] =
-    { 'N', 'T', 'L', 'M', 'S', 'S', 'P', 0 };
-
     /* nginx stuff */
     ngx_str_t host_name;
     ngx_int_t ret = NGX_DECLINED;
-    int rc;
-    int spnego_flag = 0;
     char *p;
 
     /* kerberos stuff */

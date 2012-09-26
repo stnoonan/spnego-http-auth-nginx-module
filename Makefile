@@ -1,6 +1,6 @@
 
 NAME=ngx_http_auth_spnego_module
-VERSION=0.0.4
+VERSION=1.0.0
 
 NPKG=$(NAME)-$(VERSION)
 NHEAD=$(NAME)-HEAD

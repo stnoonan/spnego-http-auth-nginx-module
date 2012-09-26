@@ -1,4 +1,3 @@
 TODO
 ----
-Change "auth_gss" to "auth_spnego" - this is probably more appropriate - mike503
 Change basic auth support to properly strip port number - stnoonan

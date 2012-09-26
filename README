@@ -1,33 +1,35 @@
 Nginx module to use SPNEGO+GSSAPI+Kerberos for HTTP authentication
 ==================================================================
+Testing
+-------
+Authentication has been tested with (at least) the following:
+  Software
+  Nginx             1.2.3
+  Internet Explorer 8.0.7600.16385
+  Firefox           10.0.6
+  Chrome            20.0.1132.57
+  Curl              7.19.5 (GSS-Negotiate), 7.27.0 (SPNEGO/fbopenssl)
 
-Foreword From Mike
-------------------
-Michael Shadle paid YoctoPetaBorg from RentACoder to develop this extension.
+The underlying kerberos library used for these tests was MIT KRB5 1.7
 
-YPB's notes are what make up the rest of this document.
+History
+-------
+Michael Shadle paid YoctoPetaBorg from RentACoder to develop this extension as
+ngx_http_auth_sso_module.  Michael then renamed it to
+ngx_http_auth_spnego_module.  This initial module provided spnego support using
+Microsoft's sample spnegohelp files.  Since then, SPNEGO support has made its
+way into various GSS/Kerberos libraries.
 
-I (Michael Shadle) have tried to string replace and rename this to be called
-"ngx_http_auth_spnego_module" instead of the previous "ngx_http_auth_sso_module" name.
+Various other people have contributed minor patches to make the extension work
+in their environments.
 
-There may be some oddities due to this. Hopefully not.
-
-mike503@gmail.com
-
-Whatsizit
----------
-
-Code 97% stolen from mod_auth_gss_krb5 (http://modgssapache.sf.net);
-version 0.0.5.
+Provenance
+----------
+The initial codebase was a fork of Apache's mod_auth_gss_krb5 0.0.5
+(http://modgssapache.sf.net) with changes to support nginx.
 
 Compilation
 -----------
-
-First you need to compile the spnegohelp dynamic library. 'make' in that
-subdirectory should do it, then place it by hand somewhere where linker
-and loader can find it by default (probably /usr/lib or perhaps even
-/usr/local/lib depending on your setup).
-
 When compiling from source build as usual adding the --add-module option:
 
   ./configure --add-module=$PATH_TO_MODULE
@@ -36,7 +38,6 @@ inside top Nginx source directory.
 
 Configuration
 -------------
-
 The module has following directives:
 
 - auth_gss: "on"/"off", for ease of unsecuring while leaving other
@@ -67,9 +68,8 @@ location /topsecret {
   auth_gss_service_name HTTP;
 }
 
-Additional steps...
--------------------
-
-pray for no segfaults...
-
-TOFIX: perhaps add instructions on how to create the service keytab...
+Additional Information
+----------------------
+Generating a keytab with an HTTP SPN will be specific to your environment. As
+with many things, ask your local administrators or try examples on Google until
+you find something that works.

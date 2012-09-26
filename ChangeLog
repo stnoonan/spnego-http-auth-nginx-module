@@ -1,3 +1,9 @@
+commit 44bbdef3f10aa719fa3a150001314ff508e08f87
+Author: Sean Noonan <sean.noonan@twosigma.com>
+Date:   Wed Sep 26 21:10:52 2012 +0000
+
+    remove spnegohelp
+
 commit fc2a777d4eb65d9f3bf14f3d6fac1a7d21f94a6a
 Author: Sean Noonan <sean.noonan@twosigma.com>
 Date:   Wed Sep 26 20:46:37 2012 +0000
