@@ -581,14 +581,11 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t * r,
     /* Use the SPN as expected by the client assuming HTTP/http_host */
     host_name = r->headers_in.host->value;
     u_char *port_start = (u_char *) ngx_strchr(host_name.data, ':');
-    uint real_host_name_len = 0;
     if (NULL == port_start) {	/* no port number specified */
-        service.length = alcf->srvcname.len + host_name.len + 2;
-        real_host_name_len = host_name.len;
+        service.length = alcf->srvcname.len + (host_name.len - 1) + 2;
     } else {			/* port number included, strip it */
         service.length =
             alcf->srvcname.len + (port_start - host_name.data - 1) + 2;
-        real_host_name_len = (port_start - host_name.data);
     }
 
     service.value = ngx_palloc(r->pool, service.length);
@@ -599,8 +596,7 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t * r,
     ngx_snprintf(service.value, service.length, "%V@%V", &alcf->srvcname,
             &host_name);
     ngx_snprintf((u_char *) service.value + service.length, 1, "%Z");
-    spnego_debug1(
-            "Using service principal: %s", service.value);
+    spnego_debug1("Using service principal: %s", service.value);
 
     major_status = gss_import_name(&minor_status, &service,
             GSS_C_NT_HOSTBASED_SERVICE,
