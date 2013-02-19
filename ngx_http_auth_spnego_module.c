@@ -568,7 +568,7 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t * r,
     krb5_init_context(&krb_ctx);
 
     ktname = (char *) ngx_pcalloc(r->pool, sizeof("KRB5_KTNAME=") +
-            alcf->keytab.len);
+            alcf->keytab.len + 1);
     if (NULL == ktname) {
         spnego_error(NGX_ERROR);
     }
