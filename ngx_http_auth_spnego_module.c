@@ -1,6 +1,7 @@
-/* 
+/*
  * Copyright (C) 2009 Michal Kowalski <superflouos{at}gmail[dot]com>
  * Copyright (C) 2012 Sean Timothy Noonan <stnoonan@obsolescence.net>
+ * Copyright (C) 2013 Marcello Barnaba <vjt@openssl.it>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
