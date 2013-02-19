@@ -626,7 +626,7 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t * r,
     spnego_debug1("Using service principal: %s", service.value);
 
     major_status = gss_import_name(&minor_status, &service,
-            GSS_C_NT_HOSTBASED_SERVICE,
+            (gss_OID) GSS_KRB5_NT_PRINCIPAL_NAME,
             &my_gss_name);
     if (GSS_ERROR(major_status)) {
         spnego_log_error("%s Used service principal: %s", get_gss_error(
