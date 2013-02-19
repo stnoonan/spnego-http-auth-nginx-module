@@ -667,9 +667,9 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t * r,
             my_gss_creds, &input_token, GSS_C_NO_CHANNEL_BINDINGS, &client_name,
             NULL, &output_token, &ret_flags, NULL, &delegated_cred);
     if (GSS_ERROR(major_status)) {
-        spnego_debug2("%s Used service principal: %s", get_gss_error(r->pool,
+        spnego_debug3("%s Used service principal: %s, input token: %s", get_gss_error(r->pool,
                     minor_status, "gss_accept_sec_context() failed"),
-                (u_char *) service.value);
+                (u_char *) service.value, (u_char *) input_token.value);
         spnego_error(NGX_DECLINED);
     }
 
