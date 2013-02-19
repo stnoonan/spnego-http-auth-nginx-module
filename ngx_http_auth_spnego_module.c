@@ -427,12 +427,14 @@ ngx_http_auth_spnego_basic(ngx_http_request_t * r,
     name = NULL;
 
     p = ngx_strchr(r->headers_in.user.data, '@');
-    user.len = 256;
-    user.data = ngx_palloc(r->pool, user.len);
+    user.len = ngx_strlen(r->headers_in.user.data) + 1;
     if (NULL == p) {
+        user.len += ngx_strlen(&alcf->realm) + 1;
+        user.data = ngx_palloc(r->pool, user.len);
         ngx_snprintf(user.data, user.len, "%V@%V%Z", &r->headers_in.user,
                 &alcf->realm);
     } else {
+        user.data = ngx_palloc(r->pool, user.len);
         ngx_snprintf(user.data, user.len, "%V%Z", &r->headers_in.user);
     }
     code = krb5_parse_name(kcontext, (const char *) user.data, &client);
