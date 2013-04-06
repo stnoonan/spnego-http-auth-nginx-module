@@ -1,6 +1,7 @@
-/* 
+/*
  * Copyright (C) 2009 Michal Kowalski <superflouos{at}gmail[dot]com>
  * Copyright (C) 2012 Sean Timothy Noonan <stnoonan@obsolescence.net>
+ * Copyright (C) 2013 Marcello Barnaba <vjt@openssl.it>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,6 +31,7 @@
 #include <ngx_http.h>
 
 #include <gssapi/gssapi.h>
+#include <gssapi/gssapi_krb5.h>
 #include <krb5.h>
 
 #define krb5_get_err_text(context,code) error_message(code)
@@ -400,13 +402,26 @@ ngx_http_auth_spnego_basic(ngx_http_request_t * r,
 
     /* TODO: support nonstandard ports */
     host_name = r->headers_in.host->value;
-    service.len = alcf->srvcname.len + host_name.len + 2;
-    service.data = ngx_palloc(r->pool, service.len);
-    if (NULL == service.data) {
-        spnego_error(NGX_ERROR);
+    service.len = alcf->srvcname.len + alcf->realm.len + 3;
+
+    if (ngx_strchr(alcf->srvcname.data, '/')) {
+      service.data = ngx_palloc(r->pool, service.len);
+      if (NULL == service.data) {
+          spnego_error(NGX_ERROR);
+      }
+
+      ngx_snprintf(service.data, service.len, "%V@%V%Z",
+              &alcf->srvcname, &alcf->realm);
+    } else {
+      service.len += host_name.len;
+      service.data = ngx_palloc(r->pool, service.len);
+      if (NULL == service.data) {
+          spnego_error(NGX_ERROR);
+      }
+
+      ngx_snprintf(service.data, service.len, "%V/%V@%V%Z",
+              &alcf->srvcname, &host_name, &alcf->realm);
     }
-    ngx_snprintf(service.data, service.len, "%V@%V%Z",
-            &alcf->srvcname, &host_name);
 
     kret = krb5_parse_name(kcontext, (const char *) service.data, &server);
 
@@ -427,12 +442,14 @@ ngx_http_auth_spnego_basic(ngx_http_request_t * r,
     name = NULL;
 
     p = ngx_strchr(r->headers_in.user.data, '@');
-    user.len = 256;
-    user.data = ngx_palloc(r->pool, user.len);
+    user.len = ngx_strlen(r->headers_in.user.data) + 1;
     if (NULL == p) {
+        user.len += ngx_strlen(&alcf->realm) + 1;
+        user.data = ngx_palloc(r->pool, user.len);
         ngx_snprintf(user.data, user.len, "%V@%V%Z", &r->headers_in.user,
                 &alcf->realm);
     } else {
+        user.data = ngx_palloc(r->pool, user.len);
         ngx_snprintf(user.data, user.len, "%V%Z", &r->headers_in.user);
     }
     code = krb5_parse_name(kcontext, (const char *) user.data, &client);
@@ -566,7 +583,7 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t * r,
     krb5_init_context(&krb_ctx);
 
     ktname = (char *) ngx_pcalloc(r->pool, sizeof("KRB5_KTNAME=") +
-            alcf->keytab.len);
+            alcf->keytab.len + 1);
     if (NULL == ktname) {
         spnego_error(NGX_ERROR);
     }
@@ -580,26 +597,37 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t * r,
 
     /* Use the SPN as expected by the client assuming HTTP/http_host */
     host_name = r->headers_in.host->value;
+    service.length = alcf->srvcname.len + alcf->realm.len + 3;
+
     u_char *port_start = (u_char *) ngx_strchr(host_name.data, ':');
     if (NULL == port_start) {	/* no port number specified */
-        service.length = alcf->srvcname.len + (host_name.len - 1) + 2;
+        service.length += host_name.len;
     } else {			/* port number included, strip it */
-        service.length =
-            alcf->srvcname.len + (port_start - host_name.data - 1) + 2;
+        service.length += port_start - host_name.data - 1;
     }
 
-    service.value = ngx_palloc(r->pool, service.length);
-    if (NULL == service.value) {
-        spnego_error(NGX_ERROR);
-    }
+    if (ngx_strchr(alcf->srvcname.data, '/')) {
+      service.value = ngx_palloc(r->pool, service.length);
+      if (NULL == service.value) {
+          spnego_error(NGX_ERROR);
+      }
 
-    ngx_snprintf(service.value, service.length, "%V@%V", &alcf->srvcname,
-            &host_name);
-    ngx_snprintf((u_char *) service.value + service.length, 1, "%Z");
+      ngx_snprintf(service.value, service.length, "%V@%V%Z",
+              &alcf->srvcname, &alcf->realm);
+    } else {
+      service.length += host_name.len;
+      service.value = ngx_palloc(r->pool, service.length);
+      if (NULL == service.value) {
+          spnego_error(NGX_ERROR);
+      }
+
+      ngx_snprintf(service.value, service.length, "%V/%V@%V%Z",
+              &alcf->srvcname, host_name.data, &alcf->realm);
+    }
     spnego_debug1("Using service principal: %s", service.value);
 
     major_status = gss_import_name(&minor_status, &service,
-            GSS_C_NT_HOSTBASED_SERVICE,
+            (gss_OID) GSS_KRB5_NT_PRINCIPAL_NAME,
             &my_gss_name);
     if (GSS_ERROR(major_status)) {
         spnego_log_error("%s Used service principal: %s", get_gss_error(
@@ -640,9 +668,9 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t * r,
             my_gss_creds, &input_token, GSS_C_NO_CHANNEL_BINDINGS, &client_name,
             NULL, &output_token, &ret_flags, NULL, &delegated_cred);
     if (GSS_ERROR(major_status)) {
-        spnego_debug2("%s Used service principal: %s", get_gss_error(r->pool,
+        spnego_debug3("%s Used service principal: %s, input token: %s", get_gss_error(r->pool,
                     minor_status, "gss_accept_sec_context() failed"),
-                (u_char *) service.value);
+                (u_char *) service.value, (u_char *) input_token.value);
         spnego_error(NGX_DECLINED);
     }
 
