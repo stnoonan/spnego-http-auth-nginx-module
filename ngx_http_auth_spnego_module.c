@@ -276,37 +276,38 @@ ngx_http_auth_spnego_init(ngx_conf_t * cf)
 static ngx_int_t
 ngx_http_auth_spnego_negotiate_headers(ngx_http_request_t * r,
         ngx_http_auth_spnego_ctx_t * ctx, ngx_str_t * token,
-        ngx_http_auth_spnego_loc_conf_t * alcf)
+        ngx_http_auth_spnego_loc_conf_t * alcf, int negotiate)
 {
     ngx_str_t value = ngx_null_string;
+    
+    if (negotiate){ 
+        if (NULL == token) {
+             value.len = sizeof("Negotiate") - 1;
+             value.data = (u_char *) "Negotiate";
+        } else {
+            value.len = sizeof("Negotiate") + token->len;	//space accounts for \0
+            value.data = ngx_pcalloc(r->pool, value.len);
+            if (NULL == value.data) {
+                return NGX_ERROR;
+            }
+            ngx_snprintf(value.data, value.len, "Negotiate %V", token);
+        }
 
-    if (NULL == token) {
-        value.len = sizeof("Negotiate") - 1;
-        value.data = (u_char *) "Negotiate";
-    } else {
-        value.len = sizeof("Negotiate") + token->len;	//space accounts for \0
-        value.data = ngx_pcalloc(r->pool, value.len);
-        if (NULL == value.data) {
+        r->headers_out.www_authenticate =
+            ngx_list_push(&r->headers_out.headers);
+        if (NULL == r->headers_out.www_authenticate) {
             return NGX_ERROR;
         }
-        ngx_snprintf(value.data, value.len, "Negotiate %V", token);
+
+        r->headers_out.www_authenticate->hash = 1;
+        r->headers_out.www_authenticate->key.len =
+            sizeof("WWW-Authenticate") - 1;
+        r->headers_out.www_authenticate->key.data =
+            (u_char *) "WWW-Authenticate";
+
+        r->headers_out.www_authenticate->value.len = value.len;
+        r->headers_out.www_authenticate->value.data = value.data;
     }
-
-    r->headers_out.www_authenticate =
-        ngx_list_push(&r->headers_out.headers);
-    if (NULL == r->headers_out.www_authenticate) {
-        return NGX_ERROR;
-    }
-
-    r->headers_out.www_authenticate->hash = 1;
-    r->headers_out.www_authenticate->key.len =
-        sizeof("WWW-Authenticate") - 1;
-    r->headers_out.www_authenticate->key.data =
-        (u_char *) "WWW-Authenticate";
-
-    r->headers_out.www_authenticate->value.len = value.len;
-    r->headers_out.www_authenticate->value.data = value.data;
-
     /* Basic auth */
     if (NULL == token) {
         ngx_str_t value2 = ngx_null_string;
@@ -388,7 +389,7 @@ ngx_http_auth_spnego_token(ngx_http_request_t * r,
 
     ctx->token.len = decoded.len;
     ctx->token.data = decoded.data;
-    spnego_debug0("Token decoded");
+    spnego_debug1("Token decoded: %s", token.data);
 
     return NGX_OK;
 }
@@ -739,7 +740,7 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t * r,
         gss_release_buffer(&minor_status2, &output_token);
 
         /* rework ngx_http_auth_spnego_negotiate_headers... */
-        if (ngx_http_auth_spnego_negotiate_headers(r, ctx, &token, alcf)
+        if (ngx_http_auth_spnego_negotiate_headers(r, ctx, &token, alcf,1)
                 == NGX_ERROR) {
             spnego_error(NGX_ERROR);
         }
@@ -871,11 +872,20 @@ static ngx_int_t ngx_http_auth_spnego_handler(ngx_http_request_t * r)
     if (ret == NGX_OK) {
         /* client sent some Negotiate'ing authorization header... */
         ret = ngx_http_auth_spnego_auth_user_gss(r, ctx, alcf);
+        /* There are chances that client knows about Negotiate but doesn't support GSSAPI */
+	if (ret == NGX_DECLINED) {
+	   spnego_debug0("GSSAPI failed. Retrying basic auth.");
+	   ret = ngx_http_auth_spnego_negotiate_headers(r, ctx, NULL, alcf,0);
+	   if (ret == NGX_ERROR) {
+              return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
+           }
+           return (ctx->ret = NGX_HTTP_UNAUTHORIZED);
+        }
     }
 
     if (ret == NGX_DECLINED) {
         /* TODEBATE skip if (ctx->head)... */
-        ret = ngx_http_auth_spnego_negotiate_headers(r, ctx, NULL, alcf);
+        ret = ngx_http_auth_spnego_negotiate_headers(r, ctx, NULL, alcf,1);
         if (ret == NGX_ERROR) {
             return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
         }
