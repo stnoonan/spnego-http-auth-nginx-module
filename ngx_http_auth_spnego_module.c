@@ -622,7 +622,7 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t * r,
       }
 
       ngx_snprintf(service.value, service.length, "%V/%V@%V%Z",
-              &alcf->srvcname, host_name.data, &alcf->realm);
+              &alcf->srvcname, &host_name, &alcf->realm);
     }
     spnego_debug1("Using service principal: %s", service.value);
 
