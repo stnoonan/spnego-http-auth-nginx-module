@@ -475,20 +475,20 @@ ngx_http_auth_spnego_basic(
     name = NULL;
 
     p = ngx_strchr(r->headers_in.user.data, '@');
-    user.len = ngx_strlen(r->headers_in.user.data) + 1;
+    user.len = r->headers_in.user.len + 1;
     if (NULL == p) {
-        user.len += ngx_strlen(&alcf->realm) + 1;
+        user.len += alcf->realm.len + 1;
         user.data = ngx_palloc(r->pool, user.len);
         ngx_snprintf(user.data, user.len, "%V@%V%Z", &r->headers_in.user,
                 &alcf->realm);
         if (alcf->force_realm && alcf->realm.data){
-            len = ngx_strlen(user.data) + 1;
+            len = user.len + 1;
             new_user = ngx_pcalloc(r->pool, len);
             if (NULL == new_user) {
                 spnego_log_error("Not enough memory");
                 spnego_error(NGX_ERROR);
             }
-            ngx_sprintf(new_user,"%s",user.data);
+            ngx_sprintf(new_user, "%s", user.data);
             new_user[len-1] = '\0';
             r->headers_in.user.len = len;
             ngx_pfree(r->pool, r->headers_in.user.data);
@@ -503,7 +503,7 @@ ngx_http_auth_spnego_basic(
             p = ngx_strchr(user.data,'@');
             if (ngx_strcmp(p + 1, alcf->realm.data) != 0) {
                 *p = '\0';
-                len = ngx_strlen(user.data)+2+alcf->realm.len;
+                len = user.len + 2 + alcf->realm.len;
                 new_user = ngx_pcalloc(r->pool, len);
                 if (NULL == new_user) {
                     spnego_log_error("Not enough memory");
@@ -766,7 +766,7 @@ ngx_http_auth_spnego_auth_user_gss(
         gss_release_buffer(&minor_status2, &output_token);
 
         /* rework ngx_http_auth_spnego_negotiate_headers... */
-        if (ngx_http_auth_spnego_negotiate_headers(r, ctx, &token, alcf,1)
+        if (ngx_http_auth_spnego_negotiate_headers(r, ctx, &token, alcf, 1)
                 == NGX_ERROR) {
             spnego_error(NGX_ERROR);
         }
@@ -886,8 +886,17 @@ ngx_http_auth_spnego_handler(
 
     ret = ngx_http_auth_basic_user(r);
     if (ret == NGX_OK) {
+        /* Got some valid auth_basic data */
         ctx->ret = ngx_http_auth_spnego_basic(r, ctx, alcf);
         spnego_debug1("ngx_http_auth_spnego_handler: returning %d", ctx->ret);
+        /* If we got a 401, we should send back headers. */
+        if (ctx->ret == NGX_HTTP_UNAUTHORIZED) {
+            spnego_debug0("Sending 401 => repeat headers.");
+            ret = ngx_http_auth_spnego_negotiate_headers(r, ctx, NULL, alcf, 0);
+            if (ret == NGX_ERROR) {
+                return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
+            }
+        }
         return ctx->ret;
     } else {
         ret = ngx_http_auth_spnego_token(r, ctx);
@@ -899,7 +908,7 @@ ngx_http_auth_spnego_handler(
         /* There are chances that client knows about Negotiate but doesn't support GSSAPI */
         if (ret == NGX_DECLINED) {
             spnego_debug0("GSSAPI failed. Retrying basic auth.");
-            ret = ngx_http_auth_spnego_negotiate_headers(r, ctx, NULL, alcf,0);
+            ret = ngx_http_auth_spnego_negotiate_headers(r, ctx, NULL, alcf, 0);
             if (ret == NGX_ERROR) {
                 return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
             }
@@ -909,7 +918,7 @@ ngx_http_auth_spnego_handler(
 
     if (ret == NGX_DECLINED) {
         /* TODEBATE skip if (ctx->head)... */
-        ret = ngx_http_auth_spnego_negotiate_headers(r, ctx, NULL, alcf,1);
+        ret = ngx_http_auth_spnego_negotiate_headers(r, ctx, NULL, alcf, 1);
         if (ret == NGX_ERROR) {
             return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
         }
