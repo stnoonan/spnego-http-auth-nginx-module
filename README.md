@@ -4,11 +4,11 @@ Nginx module to use SPNEGO+GSSAPI+Kerberos for HTTP authentication
 This module implements Kerberos authentication through GSSAPI for nginx.
 It currently DOES NOT support NTLMSSP.
 
-Pre-requirements
-----------------
+Prerequisites
+-------------
 
 Please note that Kerberos Authentication over a GSS-enabled HTTP virtual host
-works ***only*** if the following conditions are met:
+from a Windows client works ***only*** if the following conditions are met:
 
 * The client machine is joined to a Windows 2003 or greater domain
 * The user is logged on to the domain
@@ -32,17 +32,15 @@ The underlying kerberos library used for these tests was MIT KRB5 v1.8.
 Installation
 ------------
 
-Download [nginx source](http://www.nginx.org/en/download.html) and this module
-[zipball](https://github.com/ifad/spnego-http-auth-nginx-module/archive/master.zip).
+Download [nginx source](http://www.nginx.org/en/download.html)
+Extract them to a directory
+Clone this module into the directory
 
 Follow the
 [nginx install documentation](http://nginx.org/en/docs/install.html), extract
 this module zipball and pass an `--add-module` option to nginx' configure:
 
     ./configure --add-module=spnego-http-auth-nginx-module-master
-
-We've also made available a pre-built [nginx-spnego package for
-OpenSuSE](https://build.opensuse.org/package/show?package=nginx-spnego&project=home%3Avjt%3Aifad).
 
 
 Debugging
