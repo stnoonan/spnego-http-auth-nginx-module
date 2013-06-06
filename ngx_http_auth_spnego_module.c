@@ -761,7 +761,7 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t * r,
 	gss_release_buffer(&minor_status2, &output_token);
 
 	/* rework ngx_http_auth_spnego_negotiate_headers... */
-	if (ngx_http_auth_spnego_negotiate_headers(r, ctx, &token, alcf,1)
+	if (ngx_http_auth_spnego_negotiate_headers(r, ctx, &token, alcf, 1)
 		== NGX_ERROR) {
 	    spnego_error(NGX_ERROR);
 	}
@@ -883,8 +883,17 @@ static ngx_int_t ngx_http_auth_spnego_handler(ngx_http_request_t * r)
 
     ret = ngx_http_auth_basic_user(r);
     if (ret == NGX_OK) {
+        /* Got some valid auth_basic data */
 	ctx->ret = ngx_http_auth_spnego_basic(r, ctx, alcf);
 	spnego_debug1("ngx_http_auth_spnego_handler: returning %d", ctx->ret);
+        /* If we got a 401, we should send back headers. */
+        if (ctx->ret == NGX_HTTP_UNAUTHORIZED) {
+            spnego_debug0("Sending 401 => repeat headers.");
+            ret = ngx_http_auth_spnego_negotiate_headers(r, ctx, NULL, alcf, 0);
+            if (ret == NGX_ERROR) {
+                return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
+            }
+        }
 	return ctx->ret;
     } else {
 	ret = ngx_http_auth_spnego_token(r, ctx);
@@ -896,7 +905,7 @@ static ngx_int_t ngx_http_auth_spnego_handler(ngx_http_request_t * r)
 	/* There are chances that client knows about Negotiate but doesn't support GSSAPI */
 	if (ret == NGX_DECLINED) {
 	    spnego_debug0("GSSAPI failed. Retrying basic auth.");
-	    ret = ngx_http_auth_spnego_negotiate_headers(r, ctx, NULL, alcf,0);
+	    ret = ngx_http_auth_spnego_negotiate_headers(r, ctx, NULL, alcf, 0);
 	    if (ret == NGX_ERROR) {
 		return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
 	    }
@@ -906,7 +915,7 @@ static ngx_int_t ngx_http_auth_spnego_handler(ngx_http_request_t * r)
 
     if (ret == NGX_DECLINED) {
 	/* TODEBATE skip if (ctx->head)... */
-	ret = ngx_http_auth_spnego_negotiate_headers(r, ctx, NULL, alcf,1);
+	ret = ngx_http_auth_spnego_negotiate_headers(r, ctx, NULL, alcf, 1);
 	if (ret == NGX_ERROR) {
 	    return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
 	}
