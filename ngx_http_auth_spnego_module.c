@@ -469,20 +469,20 @@ ngx_http_auth_spnego_basic(ngx_http_request_t * r,
     name = NULL;
 
     p = ngx_strchr(r->headers_in.user.data, '@');
-    user.len = ngx_strlen(r->headers_in.user.data) + 1;
+    user.len = r->headers_in.user.len + 1;
     if (NULL == p) {
-	user.len += ngx_strlen(&alcf->realm) + 1;
+	user.len += alcf->realm.len + 1;
 	user.data = ngx_palloc(r->pool, user.len);
 	ngx_snprintf(user.data, user.len, "%V@%V%Z", &r->headers_in.user,
 		&alcf->realm);
 	if (alcf->force_realm && alcf->realm.data){
-	    len = ngx_strlen(user.data) + 1;
+	    len = user.len + 1;
 	    new_user = ngx_pcalloc(r->pool, len);
 	    if (NULL == new_user) {
 		spnego_log_error("Not enough memory");
 		spnego_error(NGX_ERROR);
 	    }
-	    ngx_sprintf(new_user,"%s",user.data);
+	    ngx_sprintf(new_user, "%s", user.data);
 	    new_user[len-1] = '\0';
 	    r->headers_in.user.len = len;
 	    ngx_pfree(r->pool, r->headers_in.user.data);
@@ -497,7 +497,7 @@ ngx_http_auth_spnego_basic(ngx_http_request_t * r,
 	    p = ngx_strchr(user.data,'@');
 	    if (ngx_strcmp(p + 1, alcf->realm.data) != 0) {
 		*p = '\0';
-		len = ngx_strlen(user.data)+2+alcf->realm.len;
+		len = user.len + 2 + alcf->realm.len;
 		new_user = ngx_pcalloc(r->pool, len);
 		if (NULL == new_user) {
 		    spnego_log_error("Not enough memory");
