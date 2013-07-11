@@ -107,64 +107,53 @@ typedef struct {
     ngx_str_t realm;
     ngx_str_t keytab;
     ngx_str_t srvcname;
-    ngx_str_t hostname;
     ngx_flag_t fqun;
     ngx_flag_t force_realm;
 } ngx_http_auth_spnego_loc_conf_t;
 
 /* Module Directives */
+#define SPNEGO_NGX_CONF_FLAGS NGX_HTTP_MAIN_CONF\
+    | NGX_HTTP_SRV_CONF\
+    | NGX_HTTP_LOC_CONF\
+    | NGX_CONF_FLAG
 static ngx_command_t ngx_http_auth_spnego_commands[] = {
     {ngx_string("auth_gss"),
-        NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
-            NGX_CONF_FLAG,
+        SPNEGO_NGX_CONF_FLAGS,
         ngx_conf_set_flag_slot,
         NGX_HTTP_LOC_CONF_OFFSET,
         offsetof(ngx_http_auth_spnego_loc_conf_t, protect),
         NULL},
 
     {ngx_string("auth_gss_realm"),
-        NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
-            NGX_CONF_TAKE1,
+        SPNEGO_NGX_CONF_FLAGS,
         ngx_conf_set_str_slot,
         NGX_HTTP_LOC_CONF_OFFSET,
         offsetof(ngx_http_auth_spnego_loc_conf_t, realm),
         NULL},
 
     {ngx_string("auth_gss_keytab"),
-        NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
-            NGX_CONF_TAKE1,
+        SPNEGO_NGX_CONF_FLAGS,
         ngx_conf_set_str_slot,
         NGX_HTTP_LOC_CONF_OFFSET,
         offsetof(ngx_http_auth_spnego_loc_conf_t, keytab),
         NULL},
 
     {ngx_string("auth_gss_service_name"),
-        /* TODO change to NGX_CONF_1MORE for "http", "khttp", besides "HTTP" */
-        NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
-            NGX_CONF_TAKE1,
+        SPNEGO_NGX_CONF_FLAGS,
         ngx_conf_set_str_slot,
         NGX_HTTP_LOC_CONF_OFFSET,
         offsetof(ngx_http_auth_spnego_loc_conf_t, srvcname),
         NULL},
 
-    {ngx_string("auth_gss_host_name"),
-        NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
-        ngx_conf_set_str_slot,
-        NGX_HTTP_LOC_CONF_OFFSET,
-        offsetof(ngx_http_auth_spnego_loc_conf_t, hostname),
-        NULL },
-
     {ngx_string("auth_gss_format_full"),
-        NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
-            NGX_CONF_FLAG,
+        SPNEGO_NGX_CONF_FLAGS,
         ngx_conf_set_flag_slot,
         NGX_HTTP_LOC_CONF_OFFSET,
         offsetof(ngx_http_auth_spnego_loc_conf_t, fqun),
         NULL},
 
     {ngx_string("auth_gss_force_realm"),
-        NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
-            NGX_CONF_FLAG,
+        SPNEGO_NGX_CONF_FLAGS,
         ngx_conf_set_flag_slot,
         NGX_HTTP_LOC_CONF_OFFSET,
         offsetof(ngx_http_auth_spnego_loc_conf_t, force_realm),
@@ -238,7 +227,6 @@ ngx_http_auth_spnego_merge_loc_conf(
     ngx_conf_merge_str_value(conf->keytab, prev->keytab,
             "/etc/krb5.keytab");
     ngx_conf_merge_str_value(conf->srvcname, prev->srvcname, "HTTP");
-    ngx_conf_merge_str_value(conf->hostname, prev->hostname, "");
 
     ngx_conf_merge_off_value(conf->fqun, prev->fqun, 0);
     ngx_conf_merge_off_value(conf->force_realm, prev->force_realm, 0);
