@@ -1,3 +1,173 @@
+commit 81a26f9e98eb2311ba2c6e81e9adcad85b2d59be
+Author: Sean Noonan <sean.noonan@twosigma.com>
+Date:   Fri Jul 12 19:10:30 2013 +0000
+
+    Use proper credentials when none are specified
+    
+    Rather than construct specific principal names, the correct behavior is
+    to use GSS_C_NO_CREDENTIAL.
+    
+    Additionally, always send both basic auth and negotiate headers
+
+commit d6ecb02b9fe1bfb7e7eac6b98be6bc133edb9b51
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Thu Jul 11 19:23:49 2013 -0400
+
+    Remove hostname directive from configuration
+
+commit cc5514fd4c002cf70446f447decf806a3c3bd57d
+Merge: 5afe502 a00bb5d
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Thu Jun 6 19:48:31 2013 -0400
+
+    Merge changes due to pull request
+
+commit 5afe5024390e02cf92bbe79eb2131c0a1ad46384
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Thu Jun 6 19:40:46 2013 -0400
+
+    Modify README and remove TODO
+    
+    While the majority usage of this module will be against a Windows domain, that is certainly not the only use case.  We need to be clear that the requirements for Windows are just those and do not necessarily apply across the board.
+
+commit 7f8ac65c7e2683c9a50cca52f3ecaaa738807746
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Thu Jun 6 19:18:16 2013 -0400
+
+    Formatting cleanup
+
+commit a00bb5d4f6c7d8dbedd9cebd8f372e7de2c5ad69
+Merge: 87bb358 413012a
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Thu Jun 6 16:34:41 2013 -0700
+
+    Merge pull request #5 from rbarrois/fix_auth_basic
+    
+    Fix auth basic fallback.
+
+commit 413012a2aa5bbdec4138448d0ff26546a1587b9d
+Author: Raphaël Barrois <raphael.barrois@polytechnique.org>
+Date:   Fri Jun 7 01:28:10 2013 +0200
+
+    Properly send back WWW-Authenticate header on 401 (Closes #4).
+
+commit 5062c25c64cfb0db8eaf3acb03e70b2dc40dbf22
+Author: Raphaël Barrois <raphael.barrois@polytechnique.org>
+Date:   Fri Jun 7 00:27:14 2013 +0200
+
+    Remove buggy calls to ngx_strlen on ngx_str_t.
+
+commit 87bb3581c4764a83517b37210f1c5119c25dc67d
+Merge: f6f5271 cec02d0
+Author: Sean Noonan <sean.noonan@twosigma.com>
+Date:   Thu Jun 6 20:25:33 2013 +0000
+
+    Merge basic auth changes from pyhalov
+
+commit f6f5271d6d5ed9297673760e0d263ec2ab6d642d
+Merge: 4e8f13e 57cb988
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Mon May 13 20:09:23 2013 -0700
+
+    Merge pull request #2 from Roguelazer/fix_segfault
+    
+    fix segfault on log
+
+commit 57cb9883d011f3b251a7a18adf318ab2aae166be
+Author: James Brown <jbrown@uber.com>
+Date:   Mon May 13 19:50:48 2013 -0700
+
+    fix segfault on log
+
+commit 4e8f13e16363fc90ecbd0477ec728c96d5f4a8d3
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Mon May 6 11:13:16 2013 -0300
+
+    Update README.md
+    
+    Removed Windows specific references, as they are severely misleading to people working in an MIT/Heimdal only environment.
+
+commit cec02d072286bcfdaefc1edff6f4aaf983369100
+Author: Alexander Pyhalov <alp@sfedu.ru>
+Date:   Wed Apr 10 00:24:41 2013 +0400
+
+    Behave like apache mod_auth_krb5: if Negotiate failed, then try pure basic. Otherwise Windows clients, which doesn't belong to domain, fail.
+
+commit b2f14e233626cda825e3fc0da115a5dbc5ed4031
+Author: Alexander Pyhalov <alp@sfedu.ru>
+Date:   Mon Apr 8 17:55:49 2013 +0400
+
+    Made basic authorization work. Added posibility for using GSSAPI on non-default ports. Alway pass realm to nginx if forced
+
+commit 9bd83699a325a37f17475c3dc106b46ecf86b18e
+Merge: df0769d f332f1c
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Fri Apr 5 20:37:04 2013 -0700
+
+    Merge pull request #1 from ifad/master
+    
+    Documentation, enhanced debugging, BOF fixes
+
+commit f332f1c53456f79fd772f017c500aeda9e173ff7
+Author: Marcello Barnaba <vjt@openssl.it>
+Date:   Tue Feb 19 18:31:37 2013 +0100
+
+    README
+
+commit 6631c8aab6a94236a1470507c086be0595fb40ba
+Author: Marcello Barnaba <vjt@openssl.it>
+Date:   Tue Feb 19 14:29:36 2013 +0100
+
+    Add myself to the list of authors
+
+commit af8c31d8cab62f417234f47b3365b24e2709f50a
+Author: Marcello Barnaba <vjt@openssl.it>
+Date:   Tue Feb 19 14:29:30 2013 +0100
+
+    Log the input_token, to debug failures due to NTLMSSP
+
+commit af3a2444207c88d894c39eb08f4a90cbfbefda5c
+Author: Marcello Barnaba <vjt@openssl.it>
+Date:   Tue Feb 19 14:29:10 2013 +0100
+
+    Silence pointer qualifier ignore warning
+
+commit 70f88935812165ce3f1d68b3bfec7214b7e469ac
+Author: Marcello Barnaba <vjt@openssl.it>
+Date:   Tue Feb 19 14:28:45 2013 +0100
+
+    Build fully-qualified SPN, using host name if it is not specified in config
+
+commit b8dd3c0fbd885afb5adb93e393d4642fdc40c07a
+Author: Marcello Barnaba <vjt@openssl.it>
+Date:   Tue Feb 19 14:26:38 2013 +0100
+
+    Fix another BOF
+
+commit 8b1ac33bfad41d3ad81888ff8c2a1b1de11b8676
+Author: Marcello Barnaba <vjt@openssl.it>
+Date:   Tue Feb 19 14:26:16 2013 +0100
+
+    Fix buffer overflow
+
+commit 3b6b171c1cb8baf0c95379c608090acceed600bc
+Author: Marcello Barnaba <vjt@openssl.it>
+Date:   Mon Feb 18 19:13:32 2013 +0100
+
+    Remove redundant -Wl option
+
+commit df0769d7341981be88bf39b82250ad6ef0edfedd
+Author: Sean Noonan <sean.noonan@twosigma.com>
+Date:   Thu Sep 27 14:37:58 2012 +0000
+
+    Correct the length of the host name when there is no port specified
+
+commit 9f04ee459b469627fc92d0c573c4ae1f8933cf82
+Author: Sean Noonan <sean.noonan@twosigma.com>
+Date:   Wed Sep 26 21:43:19 2012 +0000
+
+    Update README and bump version in Makefile
+
 commit 44bbdef3f10aa719fa3a150001314ff508e08f87
 Author: Sean Noonan <sean.noonan@twosigma.com>
 Date:   Wed Sep 26 21:10:52 2012 +0000
