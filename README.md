@@ -87,6 +87,11 @@ Debugging
 The module prints all sort of debugging information if nginx is compiled with
 the `--with-debug` option, and the `error_log` directive has a `debug` level.
 
+TODO
+____
+
+Revisit basic auth
+
 
 NTLM
 ____
