@@ -31,6 +31,7 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 
+#include <stdbool.h>
 #include <gssapi/gssapi.h>
 #include <gssapi/gssapi_krb5.h>
 #include <krb5.h>
@@ -71,8 +72,6 @@ get_gss_error(
     char buf[1024];
     size_t len;
     ngx_str_t str;
-
-    /* %Z inserts '\0' */
     ngx_snprintf((u_char *) buf, sizeof(buf), "%s: %Z", prefix);
     len = ngx_strlen(buf);
     do {
@@ -88,20 +87,18 @@ get_gss_error(
     }
     while (!GSS_ERROR(maj_stat) && msg_ctx != 0);
 
-    /* "include" '\0' */
-    str.len = len + 1;
+    str.len = len + 1; /* "include" '\0' */
     str.data = (u_char *) buf;
     return (char *) (ngx_pstrdup(p, &str));
 }
 
-/* Module per Req/Con CONTEXTUAL Struct */
+/* per request/connection */
 typedef struct {
     ngx_str_t token; /* decoded Negotiate token */
     ngx_int_t head; /* non-zero flag if headers set */
     ngx_int_t ret; /* current return code */
 } ngx_http_auth_spnego_ctx_t;
 
-/* Module Configuration Struct(s) (main|srv|loc) */
 typedef struct {
     ngx_flag_t protect;
     ngx_str_t realm;
@@ -111,11 +108,12 @@ typedef struct {
     ngx_flag_t force_realm;
 } ngx_http_auth_spnego_loc_conf_t;
 
-/* Module Directives */
 #define SPNEGO_NGX_CONF_FLAGS NGX_HTTP_MAIN_CONF\
     | NGX_HTTP_SRV_CONF\
     | NGX_HTTP_LOC_CONF\
     | NGX_CONF_FLAG
+
+/* Module Directives */
 static ngx_command_t ngx_http_auth_spnego_commands[] = {
     {ngx_string("auth_gss"),
         SPNEGO_NGX_CONF_FLAGS,
@@ -223,10 +221,10 @@ ngx_http_auth_spnego_merge_loc_conf(
     /* "off" by default */
     ngx_conf_merge_off_value(conf->protect, prev->protect, 0);
 
-    ngx_conf_merge_str_value(conf->realm, prev->realm, "LOCALDOMAIN");
+    ngx_conf_merge_str_value(conf->realm, prev->realm, "");
     ngx_conf_merge_str_value(conf->keytab, prev->keytab,
             "/etc/krb5.keytab");
-    ngx_conf_merge_str_value(conf->srvcname, prev->srvcname, "HTTP");
+    ngx_conf_merge_str_value(conf->srvcname, prev->srvcname, "");
 
     ngx_conf_merge_off_value(conf->fqun, prev->fqun, 0);
     ngx_conf_merge_off_value(conf->force_realm, prev->force_realm, 0);
@@ -269,68 +267,56 @@ ngx_http_auth_spnego_init(
 }
 
 static ngx_int_t
-ngx_http_auth_spnego_negotiate_headers(
+ngx_http_auth_spnego_headers(
     ngx_http_request_t *r,
     ngx_http_auth_spnego_ctx_t *ctx,
     ngx_str_t *token,
-    ngx_http_auth_spnego_loc_conf_t *alcf,
-    int negotiate)
+    ngx_http_auth_spnego_loc_conf_t *alcf)
 {
     ngx_str_t value = ngx_null_string;
-
-    if (negotiate) {
-        if (NULL == token) {
-            value.len = sizeof("Negotiate") - 1;
-            value.data = (u_char *) "Negotiate";
-        } else {
-            value.len = sizeof("Negotiate") + token->len; /* space accounts for \0 */
-            value.data = ngx_pcalloc(r->pool, value.len);
-            if (NULL == value.data) {
-                return NGX_ERROR;
-            }
-            ngx_snprintf(value.data, value.len, "Negotiate %V", token);
-        }
-
-        r->headers_out.www_authenticate =
-            ngx_list_push(&r->headers_out.headers);
-        if (NULL == r->headers_out.www_authenticate) {
-            return NGX_ERROR;
-        }
-
-        r->headers_out.www_authenticate->hash = 1;
-        r->headers_out.www_authenticate->key.len =
-            sizeof("WWW-Authenticate") - 1;
-        r->headers_out.www_authenticate->key.data =
-            (u_char *) "WWW-Authenticate";
-
-        r->headers_out.www_authenticate->value.len = value.len;
-        r->headers_out.www_authenticate->value.data = value.data;
-    }
-
-    /* Basic auth */
     if (NULL == token) {
-        ngx_str_t value2 = ngx_null_string;
-        value2.len = sizeof("Basic realm=\"\"") - 1 + alcf->realm.len;
-        value2.data = ngx_pcalloc(r->pool, value2.len);
-        if (NULL == value2.data) {
+        value.len = sizeof("Negotiate") - 1;
+        value.data = (u_char *) "Negotiate";
+    } else {
+        value.len = sizeof("Negotiate") + token->len; /* space accounts for \0 */
+        value.data = ngx_pcalloc(r->pool, value.len);
+        if (NULL == value.data) {
             return NGX_ERROR;
         }
-        ngx_snprintf(value2.data, value2.len, "Basic realm=\"%V\"",
-                &alcf->realm);
-        r->headers_out.www_authenticate =
-            ngx_list_push(&r->headers_out.headers);
-        if (NULL == r->headers_out.www_authenticate) {
-            return NGX_ERROR;
-        }
-
-        r->headers_out.www_authenticate->hash = 1;
-        r->headers_out.www_authenticate->key.len =
-            sizeof("WWW-Authenticate") - 1;
-        r->headers_out.www_authenticate->key.data =
-            (u_char *) "WWW-Authenticate";
-        r->headers_out.www_authenticate->value.len = value2.len;
-        r->headers_out.www_authenticate->value.data = value2.data;
+        ngx_snprintf(value.data, value.len, "Negotiate %V", token);
     }
+
+    r->headers_out.www_authenticate =
+        ngx_list_push(&r->headers_out.headers);
+    if (NULL == r->headers_out.www_authenticate) {
+        return NGX_ERROR;
+    }
+
+    r->headers_out.www_authenticate->hash = 1;
+    r->headers_out.www_authenticate->key.len = sizeof("WWW-Authenticate") - 1;
+    r->headers_out.www_authenticate->key.data = (u_char *) "WWW-Authenticate";
+    r->headers_out.www_authenticate->value.len = value.len;
+    r->headers_out.www_authenticate->value.data = value.data;
+
+    ngx_str_t value2 = ngx_null_string;
+    value2.len = sizeof("Basic realm=\"\"") - 1 + alcf->realm.len;
+    value2.data = ngx_pcalloc(r->pool, value2.len);
+    if (NULL == value2.data) {
+        return NGX_ERROR;
+    }
+    ngx_snprintf(value2.data, value2.len, "Basic realm=\"%V\"",
+            &alcf->realm);
+    r->headers_out.www_authenticate =
+        ngx_list_push(&r->headers_out.headers);
+    if (NULL == r->headers_out.www_authenticate) {
+        return NGX_ERROR;
+    }
+
+    r->headers_out.www_authenticate->hash = 2;
+    r->headers_out.www_authenticate->key.len = sizeof("WWW-Authenticate") - 1;
+    r->headers_out.www_authenticate->key.data = (u_char *) "WWW-Authenticate";
+    r->headers_out.www_authenticate->value.len = value2.len;
+    r->headers_out.www_authenticate->value.data = value2.data;
 
     ctx->head = 1;
 
@@ -344,24 +330,29 @@ ngx_http_auth_spnego_token(
 {
     ngx_str_t token;
     ngx_str_t decoded;
+    size_t nego_sz = sizeof("Negotiate");
 
     if (NULL == r->headers_in.authorization) {
         return NGX_DECLINED;
     }
+
     /* but don't decode second time? */
     if (ctx->token.len)
         return NGX_OK;
 
     token = r->headers_in.authorization->value;
 
-    if (token.len < sizeof("Negotiate ") - 1
-            || ngx_strncasecmp(token.data, (u_char *) "Negotiate ",
-                sizeof("Negotiate ") - 1) != 0) {
+    if (token.len < nego_sz ||
+	    ngx_strncasecmp(token.data, (u_char *) "Negotiate ", nego_sz) != 0) {
+	if (ngx_strncasecmp(
+		    token.data, (u_char *) "NTLM", sizeof("NTLM")) == 0) {
+	    spnego_log_error("Detected unsupported mechanism: NTLM")
+	}
         return NGX_DECLINED;
     }
 
-    token.len -= sizeof("Negotiate ") - 1;
-    token.data += sizeof("Negotiate ") - 1;
+    token.len -= nego_sz;
+    token.data += nego_sz;
 
     while (token.len && token.data[0] == ' ') {
         token.len--;
@@ -373,7 +364,7 @@ ngx_http_auth_spnego_token(
     }
 
     decoded.len = ngx_base64_decoded_length(token.len);
-    decoded.data = ngx_pnalloc(r->pool, decoded.len + 1);
+    decoded.data = ngx_pnalloc(r->pool, decoded.len);
     if (NULL == decoded.data) {
         return NGX_ERROR;
     }
@@ -382,11 +373,9 @@ ngx_http_auth_spnego_token(
         return NGX_DECLINED;
     }
 
-    decoded.data[decoded.len] = '\0'; /* hmmm */
-
     ctx->token.len = decoded.len;
     ctx->token.data = decoded.data;
-    spnego_debug1("Token decoded: %s", token.data);
+    spnego_debug2("Token decoded: %*s", token.len, token.data);
 
     return NGX_OK;
 }
@@ -421,7 +410,6 @@ ngx_http_auth_spnego_basic(
         return NGX_ERROR;
     }
 
-    /* TODO: support nonstandard ports */
     host_name = r->headers_in.host->value;
     service.len = alcf->srvcname.len + alcf->realm.len + 3;
 
@@ -606,23 +594,34 @@ ngx_http_auth_spnego_set_bogus_authorization(
     return NGX_OK;
 }
 
+static bool
+env_ktname(
+    ngx_http_request_t * r,
+    ngx_str_t *keytab)
+{
+    char *ktname = NULL;
+    size_t kt_sz = sizeof("KRB5_KTNAME=") + keytab->len;
+
+    ktname = (char *) ngx_pcalloc(r->pool, kt_sz + 1);
+    if (NULL == ktname) {
+        return false;
+    }
+    ngx_snprintf((u_char *) ktname, kt_sz, "KRB5_KTNAME=%V%Z", keytab);
+    putenv(ktname);
+
+    spnego_debug1("Use keytab %V", keytab);
+    return true;
+}
+
 ngx_int_t
 ngx_http_auth_spnego_auth_user_gss(
     ngx_http_request_t * r,
     ngx_http_auth_spnego_ctx_t * ctx,
     ngx_http_auth_spnego_loc_conf_t * alcf)
 {
-    /* nginx stuff */
-    ngx_str_t host_name;
     ngx_int_t ret = NGX_DECLINED;
     char *p;
-
-    /* kerberos stuff */
-    krb5_context krb_ctx = NULL;
-    char *ktname = NULL;
-    ngx_str_t spnegoToken = ngx_null_string;
-
-    /* gssapi stuff */
+    ngx_str_t spnego_token = ngx_null_string;
     OM_uint32 major_status, minor_status, minor_status2;
     gss_buffer_desc service = GSS_C_EMPTY_BUFFER;
     gss_name_t my_gss_name = GSS_C_NO_NAME;
@@ -631,104 +630,71 @@ ngx_http_auth_spnego_auth_user_gss(
     gss_ctx_id_t gss_context = GSS_C_NO_CONTEXT;
     gss_name_t client_name = GSS_C_NO_NAME;
     gss_buffer_desc output_token = GSS_C_EMPTY_BUFFER;
-    OM_uint32 ret_flags = 0;
-    gss_cred_id_t delegated_cred = GSS_C_NO_CREDENTIAL;
 
     if (NULL == ctx || ctx->token.len == 0)
         return ret;
 
     spnego_debug0("GSSAPI authorizing");
 
-    krb5_init_context(&krb_ctx);
-
-    ktname = (char *) ngx_pcalloc(r->pool, sizeof("KRB5_KTNAME=") +
-            alcf->keytab.len + 1);
-    if (NULL == ktname) {
+    if (!env_ktname(r, &alcf->keytab)) {
+        spnego_debug0("Failed to set KRB5_KTNAME");
         spnego_error(NGX_ERROR);
     }
-    ngx_snprintf((u_char *) ktname,
-            sizeof("KRB5_KTNAME=") + alcf->keytab.len,
-            "KRB5_KTNAME=%V%Z", &alcf->keytab);
-    putenv(ktname);
 
-    spnego_debug1("Use keytab %V", &alcf->keytab);
-
-    /* Use the SPN as expected by the client assuming HTTP/http_host */
-    host_name = r->headers_in.host->value;
-    service.length = alcf->srvcname.len + alcf->realm.len + 3;
-
-    u_char *port_start = (u_char *) ngx_strchr(host_name.data, ':');
-    if (NULL == port_start) { /* no port number specified */
-        service.length += host_name.len;
-    } else {/* port number included, strip it */
-        service.length += port_start - host_name.data - 1;
-    }
-
-    if (ngx_strchr(alcf->srvcname.data, '/')) {
+    if (alcf->srvcname.len > 0) {
+        /* if there is a specific service prinicipal set in the configuration
+         * file, we need to use it.  Otherwise, use the default of no credentials
+         */
+        service.length = alcf->srvcname.len + alcf->realm.len + 2;
         service.value = ngx_palloc(r->pool, service.length);
         if (NULL == service.value) {
             spnego_error(NGX_ERROR);
         }
-
         ngx_snprintf(service.value, service.length, "%V@%V%Z",
                 &alcf->srvcname, &alcf->realm);
-    } else {
-        service.length += host_name.len;
-        service.value = ngx_palloc(r->pool, service.length);
-        if (NULL == service.value) {
+
+        spnego_debug1("Using service principal: %s", service.value);
+        major_status = gss_import_name(&minor_status, &service,
+                (gss_OID) GSS_KRB5_NT_PRINCIPAL_NAME, &my_gss_name);
+        if (GSS_ERROR(major_status)) {
+            spnego_log_error("%s Used service principal: %s", get_gss_error(
+                        r->pool, minor_status, "gss_import_name() failed"),
+                    (u_char *) service.value);
+            spnego_error(NGX_ERROR);
+        }
+        gss_buffer_desc human_readable_gss_name = GSS_C_EMPTY_BUFFER;
+        major_status = gss_display_name(&minor_status, my_gss_name,
+                &human_readable_gss_name, NULL);
+
+        if (GSS_ERROR(major_status)) {
+            spnego_log_error("%s Used service principal: %s ", get_gss_error(
+                        r->pool, minor_status, "gss_display_name() failed"),
+                    (u_char *) service.value);
+        }
+        spnego_debug1("my_gss_name %s", human_readable_gss_name.value);
+
+        /* Obtain credentials */
+        major_status = gss_acquire_cred(&minor_status, my_gss_name,
+                GSS_C_INDEFINITE, GSS_C_NO_OID_SET, GSS_C_ACCEPT, &my_gss_creds,
+                NULL, NULL);
+        if (GSS_ERROR(major_status)) {
+            spnego_log_error("%s Used service principal: %s", get_gss_error(
+                        r->pool, minor_status, "gss_acquire_cred() failed"),
+                    (u_char *) service.value);
             spnego_error(NGX_ERROR);
         }
 
-        ngx_snprintf(service.value, service.length, "%V/%V@%V%Z",
-                &alcf->srvcname, &host_name, &alcf->realm);
-    }
-    spnego_debug1("Using service principal: %s", service.value);
-
-    major_status = gss_import_name(&minor_status, &service,
-            (gss_OID) GSS_KRB5_NT_PRINCIPAL_NAME,
-            &my_gss_name);
-    if (GSS_ERROR(major_status)) {
-        spnego_log_error("%s Used service principal: %s", get_gss_error(
-                    r->pool, minor_status, "gss_import_name() failed"),
-                (u_char *) service.value);
-        spnego_error(NGX_ERROR);
     }
 
-    /* Log the credentials we plan to use */
-    gss_buffer_desc human_readable_gss_name = GSS_C_EMPTY_BUFFER;
-    major_status = gss_display_name(&minor_status, my_gss_name,
-            &human_readable_gss_name, NULL);
-
-    if (GSS_ERROR(major_status)) {
-        spnego_log_error("%s Used service principal: %s ", get_gss_error(
-                    r->pool, minor_status, "gss_display_name() failed"),
-                (u_char *) service.value);
-    }
-    spnego_debug1("my_gss_name %s", human_readable_gss_name.value);
-
-    /* Obtain credentials */
-    major_status =
-        gss_acquire_cred(&minor_status, my_gss_name, GSS_C_INDEFINITE,
-                GSS_C_NO_OID_SET, GSS_C_ACCEPT, &my_gss_creds,
-                NULL, NULL);
-    if (GSS_ERROR(major_status)) {
-        spnego_log_error("%s Used service principal: %s", get_gss_error(
-                    r->pool, minor_status, "gss_acquire_cred() failed"),
-                (u_char *) service.value);
-        spnego_error(NGX_ERROR);
-    }
-
-    /* Decode the tokens as needed to support SPNEGO and GSS Negotiate */
     input_token.length = ctx->token.len;
     input_token.value = (void *) ctx->token.data;
 
     major_status = gss_accept_sec_context(&minor_status, &gss_context,
             my_gss_creds, &input_token, GSS_C_NO_CHANNEL_BINDINGS, &client_name,
-            NULL, &output_token, &ret_flags, NULL, &delegated_cred);
+            NULL, &output_token, NULL, NULL, NULL);
     if (GSS_ERROR(major_status)) {
-        spnego_debug3("%s Used service principal: %s, input token: %s", get_gss_error(r->pool,
-                    minor_status, "gss_accept_sec_context() failed"),
-                (u_char *) service.value, (u_char *) input_token.value);
+        spnego_debug1("%s", get_gss_error(
+		r->pool, minor_status, "gss_accept_sec_context() failed"));
         spnego_error(NGX_DECLINED);
     }
 
@@ -740,42 +706,30 @@ ngx_http_auth_spnego_auth_user_gss(
     if (output_token.length) {
         ngx_str_t token = ngx_null_string;
 
-        spnegoToken.data = (u_char *) output_token.value;
-        spnegoToken.len = output_token.length - 1;
+        spnego_token.data = (u_char *) output_token.value;
+        spnego_token.len = output_token.length - 1;
 
-        token.len = ngx_base64_encoded_length(spnegoToken.len);
+        token.len = ngx_base64_encoded_length(spnego_token.len);
         token.data = ngx_pcalloc(r->pool, token.len + 1);
         if (NULL == token.data) {
             spnego_log_error("Not enough memory");
             gss_release_buffer(&minor_status2, &output_token);
             spnego_error(NGX_ERROR);
         }
-        ngx_encode_base64(&token, &spnegoToken);
+        ngx_encode_base64(&token, &spnego_token);
         gss_release_buffer(&minor_status2, &output_token);
 
-        /* rework ngx_http_auth_spnego_negotiate_headers... */
-        if (ngx_http_auth_spnego_negotiate_headers(r, ctx, &token, alcf, 1)
-                == NGX_ERROR) {
+        if (ngx_http_auth_spnego_headers(r, ctx, &token, alcf) == NGX_ERROR) {
             spnego_error(NGX_ERROR);
         }
     }
 
-    if (!(ret_flags & GSS_C_REPLAY_FLAG || ret_flags & GSS_C_SEQUENCE_FLAG)) {
-        spnego_debug0("GSSAPI Warning: no replay protection !");
-    }
-    if (!(ret_flags & GSS_C_SEQUENCE_FLAG)) {
-        spnego_debug0("GSSAPI Warning: no sequence protection !");
-    }
-
     /* getting user name at the other end of the request */
-    major_status =
-        gss_display_name(&minor_status, client_name, &output_token, NULL);
+    major_status = gss_display_name(&minor_status, client_name, &output_token, NULL);
     gss_release_name(&minor_status, &client_name);
-
-    /* hmm... if he is going to ERROR out now we should do it before setting headers... */
     if (GSS_ERROR(major_status)) {
         spnego_log_error("%s", get_gss_error(r->pool, minor_status,
-                    "gss_display_name() failed"));
+		    "gss_display_name() failed"));
         spnego_error(NGX_ERROR);
     }
 
@@ -787,7 +741,11 @@ ngx_http_auth_spnego_auth_user_gss(
         };
 
         r->headers_in.user.data = ngx_pstrdup(r->pool, &user);
-        /* NULL?!? */
+        if (NULL == r->headers_in.user.data) {
+	    spnego_log_error("ngx_pstrdup failed to allocate");
+	    spnego_error(NGX_ERROR);
+	}
+
         r->headers_in.user.len = user.len;
         if (alcf->fqun == 0) {
             p = ngx_strchr(r->headers_in.user.data, '@');
@@ -804,18 +762,10 @@ ngx_http_auth_spnego_auth_user_gss(
 
     gss_release_buffer(&minor_status, &output_token);
 
-    /* saving creds... LATER, for now debug msg... */
-    if (delegated_cred != GSS_C_NO_CREDENTIAL) {
-        spnego_debug0("Had delegated_cred to save.");
-    }
-
     ret = NGX_OK;
     goto end;
 
 end:
-    if (delegated_cred)
-        gss_release_cred(&minor_status, &delegated_cred);
-
     if (output_token.length)
         gss_release_buffer(&minor_status, &output_token);
 
@@ -826,7 +776,6 @@ end:
         gss_delete_sec_context(&minor_status, &gss_context,
                 GSS_C_NO_BUFFER);
 
-    krb5_free_context(krb_ctx);
     if (my_gss_name != GSS_C_NO_NAME)
         gss_release_name(&minor_status, &my_gss_name);
 
@@ -840,7 +789,7 @@ static ngx_int_t
 ngx_http_auth_spnego_handler(
     ngx_http_request_t * r)
 {
-    ngx_int_t ret;
+    ngx_int_t ret = NGX_DECLINED;
     ngx_http_auth_spnego_ctx_t *ctx;
     ngx_http_auth_spnego_loc_conf_t *alcf;
 
@@ -862,7 +811,6 @@ ngx_http_auth_spnego_handler(
         ctx->ret = NGX_HTTP_UNAUTHORIZED;
         ngx_http_set_ctx(r, ctx, ngx_http_auth_spnego_module);
     }
-    /* nope... local fs req creates new ctx... useless... */
 
     spnego_debug3("SSO auth handling IN: token.len=%d, head=%d, ret=%d",
             ctx->token.len, ctx->head, ctx->ret);
@@ -872,6 +820,8 @@ ngx_http_auth_spnego_handler(
     if (r->headers_in.user.data != NULL)
         return NGX_OK;
 
+    spnego_debug0("Begin auth");
+
     ret = ngx_http_auth_basic_user(r);
     if (ret == NGX_OK) {
         /* Got some valid auth_basic data */
@@ -879,35 +829,27 @@ ngx_http_auth_spnego_handler(
         spnego_debug1("ngx_http_auth_spnego_handler: returning %d", ctx->ret);
         /* If we got a 401, we should send back headers. */
         if (ctx->ret == NGX_HTTP_UNAUTHORIZED) {
-            spnego_debug0("Sending 401 => repeat headers.");
-            ret = ngx_http_auth_spnego_negotiate_headers(r, ctx, NULL, alcf, 0);
-            if (ret == NGX_ERROR) {
-                return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
-            }
+	    spnego_debug0("Basic auth failed");
+	    goto unauth;
         }
         return ctx->ret;
-    } else {
-        ret = ngx_http_auth_spnego_token(r, ctx);
     }
 
+    ret = ngx_http_auth_spnego_token(r, ctx);
     if (ret == NGX_OK) {
-        /* client sent some Negotiate'ing authorization header... */
+        /* client sent a reasonable Negotiate header */
         ret = ngx_http_auth_spnego_auth_user_gss(r, ctx, alcf);
         /* There are chances that client knows about Negotiate but doesn't support GSSAPI */
         if (ret == NGX_DECLINED) {
-            spnego_debug0("GSSAPI failed. Retrying basic auth.");
-            ret = ngx_http_auth_spnego_negotiate_headers(r, ctx, NULL, alcf, 0);
-            if (ret == NGX_ERROR) {
-                return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
-            }
-            return (ctx->ret = NGX_HTTP_UNAUTHORIZED);
+            spnego_debug0("GSSAPI failed");
+	    goto unauth;
         }
     }
 
     if (ret == NGX_DECLINED) {
-        /* TODEBATE skip if (ctx->head)... */
-        ret = ngx_http_auth_spnego_negotiate_headers(r, ctx, NULL, alcf, 1);
-        if (ret == NGX_ERROR) {
+unauth:
+	spnego_debug0("Sending headers");
+        if (NGX_ERROR == ngx_http_auth_spnego_headers(r, ctx, NULL, alcf)) {
             return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
         }
         return (ctx->ret = NGX_HTTP_UNAUTHORIZED);
