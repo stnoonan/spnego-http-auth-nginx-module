@@ -62,22 +62,29 @@ unsupported and insecure.
 
 ### Verify that you have an HTTP principal in your keytab ###
 #### MIT Kerberos utilities ####
+
     $ KRB5_KTNAME=FILE:<path to your keytab> klist -k
+
 or
+
     $ ktutil
     ktutil: read_kt <path to your keytab>
     ktutil: list
 
 #### Heimdal Kerberos utilities ####
+
     $ ktutil -k <path to your keytab> list
 
 ### Obtain an HTTP principal
+
 If you find that you do not have the HTTP service principal,
 are running in an Active Directory environment,
 and are bound to the domain such that Samba tools work properly
+
     $ env KRB5_KTNAME=FILE:<path to your keytab> net ads -P keytab add HTTP
 
 If you are running in a different kerberos environment, you can likely run
+
     $ env KRB5_KTNAME=FILE:<path to your keytab> krb5_keytab HTTP
 
 
@@ -88,13 +95,13 @@ The module prints all sort of debugging information if nginx is compiled with
 the `--with-debug` option, and the `error_log` directive has a `debug` level.
 
 TODO
-____
+----
 
 Revisit basic auth
 
 
 NTLM
-____
+----
 
 Note that the module does not support [NTLMSSP](http://en.wikipedia.org/wiki/NTLMSSP)
 in Negotiate. NTLM, both v1 and v2, is an exploitable protocol and should be avoided
