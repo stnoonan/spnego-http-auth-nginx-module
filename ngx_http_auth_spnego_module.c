@@ -32,6 +32,7 @@
 #include <ngx_http.h>
 
 #include <stdbool.h>
+#include <sys/param.h>
 #include <gssapi/gssapi.h>
 #include <gssapi/gssapi_krb5.h>
 #include <krb5.h>
@@ -106,6 +107,7 @@ typedef struct {
     ngx_str_t srvcname;
     ngx_flag_t fqun;
     ngx_flag_t force_realm;
+    ngx_array_t *auth_princs;
 } ngx_http_auth_spnego_loc_conf_t;
 
 #define SPNEGO_NGX_CONF_FLAGS NGX_HTTP_MAIN_CONF\
@@ -157,6 +159,13 @@ static ngx_command_t ngx_http_auth_spnego_commands[] = {
         offsetof(ngx_http_auth_spnego_loc_conf_t, force_realm),
         NULL},
 
+    {ngx_string("auth_gss_authorized_principal"),
+	SPNEGO_NGX_CONF_FLAGS | NGX_CONF_1MORE,
+	ngx_conf_set_str_array_slot,
+	NGX_HTTP_LOC_CONF_OFFSET,
+	offsetof(ngx_http_auth_spnego_loc_conf_t, auth_princs),
+	NULL},
+
     ngx_null_command
 };
 
@@ -205,6 +214,7 @@ ngx_http_auth_spnego_create_loc_conf(
     conf->protect = NGX_CONF_UNSET;
     conf->fqun = NGX_CONF_UNSET;
     conf->force_realm = NGX_CONF_UNSET;
+    conf->auth_princs = NGX_CONF_UNSET_PTR;
 
     return conf;
 }
@@ -228,6 +238,7 @@ ngx_http_auth_spnego_merge_loc_conf(
 
     ngx_conf_merge_off_value(conf->fqun, prev->fqun, 0);
     ngx_conf_merge_off_value(conf->force_realm, prev->force_realm, 0);
+    ngx_conf_merge_ptr_value(conf->auth_princs, prev->auth_princs, NGX_CONF_UNSET_PTR);
 
 #if (NGX_DEBUG)
     ngx_conf_log_error(NGX_LOG_INFO, cf, 0, "auth_spnego: protect = %i",
@@ -242,6 +253,14 @@ ngx_http_auth_spnego_merge_loc_conf(
             conf->srvcname.data, conf->srvcname.data);
     ngx_conf_log_error(NGX_LOG_INFO, cf, 0, "auth_spnego: fqun = %i",
             conf->fqun);
+    if (NGX_CONF_UNSET_PTR != conf->auth_princs) {
+	size_t ii = 0;
+	ngx_str_t *auth_princs = conf->auth_princs->elts;
+	for (; ii < conf->auth_princs->nelts; ++ii) {
+	    ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0,
+		    "auth_spnego: auth_princs = %.*s", auth_princs[ii].len, auth_princs[ii].data);
+	}
+    }
 #endif
 
     return NGX_CONF_OK;
@@ -321,6 +340,25 @@ ngx_http_auth_spnego_headers(
     ctx->head = 1;
 
     return NGX_OK;
+}
+
+static bool
+ngx_spnego_authorized_principal(
+    ngx_str_t *princ,
+    ngx_http_auth_spnego_loc_conf_t *alcf)
+{
+    if (NGX_CONF_UNSET_PTR == alcf->auth_princs) {
+	return true;
+    }
+    size_t ii = 0;
+    ngx_str_t *auth_princs = alcf->auth_princs->elts;
+    for (; ii < alcf->auth_princs->nelts; ++ii) {
+	size_t cmp_len = MAX(auth_princs[ii].len, auth_princs[ii].len);
+	if (ngx_strncmp(&(auth_princs[ii]), princ, cmp_len) == 0) {
+	    return true;
+	}
+    }
+    return false;
 }
 
 ngx_int_t
@@ -857,6 +895,12 @@ unauth:
 
     if (ret == NGX_ERROR) {
         return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
+    }
+
+
+    if (!ngx_spnego_authorized_principal(&r->headers_in.user, alcf)) {
+	spnego_debug0("User not authorized");
+	return (ctx->ret = NGX_HTTP_UNAUTHORIZED);
     }
 
     /* else NGX_OK */

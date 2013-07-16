@@ -51,9 +51,16 @@ thing.
 * `auth_gss_service_name`: service principal name to use when acquiring
   credentials.
 
+If you would like to authorize only a specific set of users, you can use the
+`auth_gss_authorized_principal` directive.  The configuration syntax supports
+multiple entries, one per line.
+
+    auth_gss_authorized_principal <username>@<realm>
+    auth_gss_authorized_principal <username2>@<realm>
+
 
 Troubleshooting
-_______________
+---------------
 
 ###
 Check the logs.  If you see a mention of NTLM, your client is attempting to
@@ -61,6 +68,7 @@ connect using [NTLMSSP](http://en.wikipedia.org/wiki/NTLMSSP), which is
 unsupported and insecure.
 
 ### Verify that you have an HTTP principal in your keytab ###
+
 #### MIT Kerberos utilities ####
 
     $ KRB5_KTNAME=FILE:<path to your keytab> klist -k
