@@ -1,3 +1,43 @@
+commit 524f70b58e776d7471aa3fda820b7bf5011a6fff
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Sat Aug 10 12:16:40 2013 -0400
+
+    Correct comparison of authorized principal len
+    
+    Fixes #7
+
+commit ee771851afaba99ebadc616b909bc41762a852b0
+Author: Sean Noonan <sean.noonan@twosigma.com>
+Date:   Tue Jul 16 17:38:56 2013 +0000
+
+    Add auth_gss_authorized_principal support
+    
+    This can be used to specify a list of principals that are allowed to authenticate
+
+commit 0b40e9adaf2873578ef459ba22fda502b0e4f078
+Author: Sean Noonan <sean.noonan@twosigma.com>
+Date:   Fri Jul 12 20:11:26 2013 +0000
+
+    Fix compile error after haphazard NTLM addition
+
+commit 2592edb043f996bbfb3a1c8792752d6bcfb9427c
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Fri Jul 12 16:01:55 2013 -0400
+
+    Update README.md
+
+commit 9fb57c5b043076be41d25281bd48769f4052a3e5
+Author: Sean Noonan <sean.noonan@twosigma.com>
+Date:   Fri Jul 12 19:54:57 2013 +0000
+
+    Update documentation
+
+commit 21995ec282ce04299d630e4fa87f2c9357b8328e
+Author: Sean Noonan <sean.noonan@twosigma.com>
+Date:   Fri Jul 12 19:48:27 2013 +0000
+
+    Update documentation
+
 commit 81a26f9e98eb2311ba2c6e81e9adcad85b2d59be
 Author: Sean Noonan <sean.noonan@twosigma.com>
 Date:   Fri Jul 12 19:10:30 2013 +0000
