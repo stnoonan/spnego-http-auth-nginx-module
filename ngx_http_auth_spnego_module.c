@@ -366,7 +366,7 @@ ngx_spnego_authorized_principal(
     ngx_str_t *auth_princs = alcf->auth_princs->elts;
     for (; ii < alcf->auth_princs->nelts; ++ii) {
         size_t cmp_len = MAX(auth_princs[ii].len, princ->len);
-        if (ngx_strncmp(&(auth_princs[ii]), princ, cmp_len) == 0) {
+        if (ngx_strncmp(&(auth_princs[ii].data), princ->data, cmp_len) == 0) {
             return true;
         }
     }
