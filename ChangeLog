@@ -1,4 +1,21 @@
-commit a27b447aa04bdba649b9d4e140125de6f64e6a7f
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Sat Aug 10 15:28:41 2013 -0400
+
+    add size check of authorized principal
+    
+    The ngx_str*cmp family of functions are thin wrappers around their str*cmp
+    equivalents.  Thus, I am doing the same style check I would do with those.
+    
+    Removes the need for sys/param.h.  Also updated the license file to have
+    the same set of authors.
+
+commit 21eea473622bbf8aca13da88430ef68dcb5ba50a
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Sat Aug 10 14:01:21 2013 -0400
+
+    Correct usage of ngx_strncmp with ngx_str_t
+
+commit 4d68e56121fc8bce663ab7b84857a6f4dd2281f2
 Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
 Date:   Sat Aug 10 12:51:46 2013 -0400
 

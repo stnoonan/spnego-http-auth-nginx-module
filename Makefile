@@ -10,7 +10,7 @@ GIT-FILES:=$(shell git ls-files)
 FILES=ChangeLog $(GIT-FILES)
 
 ChangeLog: $(GIT-FILES)
-	git log > "$@"
+	git log | sed 1d> "$@"
 
 arch-release:
 	rm -f ../$(NPKG).tar.gz ../$(NPKG).zip

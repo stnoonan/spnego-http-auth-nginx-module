@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2009 Michal Kowalski <superflouos{at}gmail[dot]com>
- * Copyright (C) 2012 Sean Timothy Noonan <stnoonan@obsolescence.net>
+ * Copyright (C) 2012-2013 Sean Timothy Noonan <stnoonan@obsolescence.net>
  * Copyright (C) 2013 Marcello Barnaba <vjt@openssl.it>
  * Copyright (C) 2013 Alexander Pyhalov <alp@sfedu.ru>
  *
@@ -32,7 +32,6 @@
 #include <ngx_http.h>
 
 #include <stdbool.h>
-#include <sys/param.h>
 #include <gssapi/gssapi.h>
 #include <gssapi/gssapi_krb5.h>
 #include <krb5.h>
@@ -365,8 +364,10 @@ ngx_spnego_authorized_principal(
     size_t ii = 0;
     ngx_str_t *auth_princs = alcf->auth_princs->elts;
     for (; ii < alcf->auth_princs->nelts; ++ii) {
-        size_t cmp_len = MAX(auth_princs[ii].len, princ->len);
-        if (ngx_strncmp(&(auth_princs[ii].data), princ->data, cmp_len) == 0) {
+        if (auth_princs[ii].len != princ->len) {
+            continue;
+        }
+        if (ngx_strncmp(&(auth_princs[ii].data), princ->data, princ->len) == 0) {
             return true;
         }
     }

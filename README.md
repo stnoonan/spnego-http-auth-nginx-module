@@ -58,6 +58,12 @@ multiple entries, one per line.
     auth_gss_authorized_principal <username>@<realm>
     auth_gss_authorized_principal <username2>@<realm>
 
+If you are using SPNEGO without SSL, it is recommended you disable basic
+authentication fallback, as the password would be sent in plaintext.  This
+is done by setting `auth_gss_allow_basic_fallback` in the config file.
+
+    auth_gss_allow_basic_fallback 0
+
 
 Troubleshooting
 ---------------
