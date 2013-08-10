@@ -1,3 +1,20 @@
+commit a27b447aa04bdba649b9d4e140125de6f64e6a7f
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Sat Aug 10 12:51:46 2013 -0400
+
+    Provide a way to disable basic auth
+    
+    While some of us would like to think every communication
+    occurs over SSL, this is a pipe dream.  SPNEGO can be
+    perfectly fine over an unencrypted channel.  Basic auth
+    cannot be.  Closes #6.
+
+commit 88c10bd2e72745f46c87c3f802f01a2248491abd
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Sat Aug 10 12:17:00 2013 -0400
+
+    Update ChangeLog
+
 commit 524f70b58e776d7471aa3fda820b7bf5011a6fff
 Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
 Date:   Sat Aug 10 12:16:40 2013 -0400

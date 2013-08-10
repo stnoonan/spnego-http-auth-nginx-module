@@ -107,6 +107,7 @@ typedef struct {
     ngx_str_t srvcname;
     ngx_flag_t fqun;
     ngx_flag_t force_realm;
+    ngx_flag_t allow_basic;
     ngx_array_t *auth_princs;
 } ngx_http_auth_spnego_loc_conf_t;
 
@@ -157,6 +158,13 @@ static ngx_command_t ngx_http_auth_spnego_commands[] = {
         ngx_conf_set_flag_slot,
         NGX_HTTP_LOC_CONF_OFFSET,
         offsetof(ngx_http_auth_spnego_loc_conf_t, force_realm),
+        NULL},
+
+    {ngx_string("auth_gss_allow_basic_fallback"),
+        SPNEGO_NGX_CONF_FLAGS,
+        ngx_conf_set_flag_slot,
+        NGX_HTTP_LOC_CONF_OFFSET,
+        offsetof(ngx_http_auth_spnego_loc_conf_t, allow_basic),
         NULL},
 
     {ngx_string("auth_gss_authorized_principal"),
@@ -214,6 +222,7 @@ ngx_http_auth_spnego_create_loc_conf(
     conf->protect = NGX_CONF_UNSET;
     conf->fqun = NGX_CONF_UNSET;
     conf->force_realm = NGX_CONF_UNSET;
+    conf->allow_basic = NGX_CONF_UNSET;
     conf->auth_princs = NGX_CONF_UNSET_PTR;
 
     return conf;
@@ -238,6 +247,7 @@ ngx_http_auth_spnego_merge_loc_conf(
 
     ngx_conf_merge_off_value(conf->fqun, prev->fqun, 0);
     ngx_conf_merge_off_value(conf->force_realm, prev->force_realm, 0);
+    ngx_conf_merge_off_value(conf->allow_basic, prev->allow_basic, 1);
     ngx_conf_merge_ptr_value(conf->auth_princs, prev->auth_princs, NGX_CONF_UNSET_PTR);
 
 #if (NGX_DEBUG)
@@ -317,25 +327,27 @@ ngx_http_auth_spnego_headers(
     r->headers_out.www_authenticate->value.len = value.len;
     r->headers_out.www_authenticate->value.data = value.data;
 
-    ngx_str_t value2 = ngx_null_string;
-    value2.len = sizeof("Basic realm=\"\"") - 1 + alcf->realm.len;
-    value2.data = ngx_pcalloc(r->pool, value2.len);
-    if (NULL == value2.data) {
-        return NGX_ERROR;
-    }
-    ngx_snprintf(value2.data, value2.len, "Basic realm=\"%V\"",
-            &alcf->realm);
-    r->headers_out.www_authenticate =
-        ngx_list_push(&r->headers_out.headers);
-    if (NULL == r->headers_out.www_authenticate) {
-        return NGX_ERROR;
-    }
+    if (alcf->allow_basic) {
+        ngx_str_t value2 = ngx_null_string;
+        value2.len = sizeof("Basic realm=\"\"") - 1 + alcf->realm.len;
+        value2.data = ngx_pcalloc(r->pool, value2.len);
+        if (NULL == value2.data) {
+            return NGX_ERROR;
+        }
+        ngx_snprintf(value2.data, value2.len, "Basic realm=\"%V\"",
+                &alcf->realm);
+        r->headers_out.www_authenticate =
+            ngx_list_push(&r->headers_out.headers);
+        if (NULL == r->headers_out.www_authenticate) {
+            return NGX_ERROR;
+        }
 
-    r->headers_out.www_authenticate->hash = 2;
-    r->headers_out.www_authenticate->key.len = sizeof("WWW-Authenticate") - 1;
-    r->headers_out.www_authenticate->key.data = (u_char *) "WWW-Authenticate";
-    r->headers_out.www_authenticate->value.len = value2.len;
-    r->headers_out.www_authenticate->value.data = value2.data;
+        r->headers_out.www_authenticate->hash = 2;
+        r->headers_out.www_authenticate->key.len = sizeof("WWW-Authenticate") - 1;
+        r->headers_out.www_authenticate->key.data = (u_char *) "WWW-Authenticate";
+        r->headers_out.www_authenticate->value.len = value2.len;
+        r->headers_out.www_authenticate->value.data = value2.data;
+    }
 
     ctx->head = 1;
 
@@ -860,17 +872,20 @@ ngx_http_auth_spnego_handler(
 
     spnego_debug0("Begin auth");
 
-    ret = ngx_http_auth_basic_user(r);
-    if (ret == NGX_OK) {
-        /* Got some valid auth_basic data */
-        ctx->ret = ngx_http_auth_spnego_basic(r, ctx, alcf);
-        spnego_debug1("ngx_http_auth_spnego_handler: returning %d", ctx->ret);
-        /* If we got a 401, we should send back headers. */
-        if (ctx->ret == NGX_HTTP_UNAUTHORIZED) {
-            spnego_debug0("Basic auth failed");
-            goto unauth;
+    if (alcf->allow_basic) {
+        spnego_debug0("Detect basic auth");
+        ret = ngx_http_auth_basic_user(r);
+        if (ret == NGX_OK) {
+            /* Got some valid auth_basic data */
+            ctx->ret = ngx_http_auth_spnego_basic(r, ctx, alcf);
+            spnego_debug1("ngx_http_auth_spnego_handler: returning %d", ctx->ret);
+            /* If we got a 401, we should send back headers. */
+            if (ctx->ret == NGX_HTTP_UNAUTHORIZED) {
+                spnego_debug0("Basic auth failed");
+                goto unauth;
+            }
+            return ctx->ret;
         }
-        return ctx->ret;
     }
 
     ret = ngx_http_auth_spnego_token(r, ctx);
