@@ -160,11 +160,11 @@ static ngx_command_t ngx_http_auth_spnego_commands[] = {
         NULL},
 
     {ngx_string("auth_gss_authorized_principal"),
-	SPNEGO_NGX_CONF_FLAGS | NGX_CONF_1MORE,
-	ngx_conf_set_str_array_slot,
-	NGX_HTTP_LOC_CONF_OFFSET,
-	offsetof(ngx_http_auth_spnego_loc_conf_t, auth_princs),
-	NULL},
+        SPNEGO_NGX_CONF_FLAGS | NGX_CONF_1MORE,
+        ngx_conf_set_str_array_slot,
+        NGX_HTTP_LOC_CONF_OFFSET,
+        offsetof(ngx_http_auth_spnego_loc_conf_t, auth_princs),
+        NULL},
 
     ngx_null_command
 };
@@ -254,12 +254,12 @@ ngx_http_auth_spnego_merge_loc_conf(
     ngx_conf_log_error(NGX_LOG_INFO, cf, 0, "auth_spnego: fqun = %i",
             conf->fqun);
     if (NGX_CONF_UNSET_PTR != conf->auth_princs) {
-	size_t ii = 0;
-	ngx_str_t *auth_princs = conf->auth_princs->elts;
-	for (; ii < conf->auth_princs->nelts; ++ii) {
-	    ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0,
-		    "auth_spnego: auth_princs = %.*s", auth_princs[ii].len, auth_princs[ii].data);
-	}
+        size_t ii = 0;
+        ngx_str_t *auth_princs = conf->auth_princs->elts;
+        for (; ii < conf->auth_princs->nelts; ++ii) {
+            ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0,
+        	    "auth_spnego: auth_princs = %.*s", auth_princs[ii].len, auth_princs[ii].data);
+        }
     }
 #endif
 
@@ -348,15 +348,15 @@ ngx_spnego_authorized_principal(
     ngx_http_auth_spnego_loc_conf_t *alcf)
 {
     if (NGX_CONF_UNSET_PTR == alcf->auth_princs) {
-	return true;
+        return true;
     }
     size_t ii = 0;
     ngx_str_t *auth_princs = alcf->auth_princs->elts;
     for (; ii < alcf->auth_princs->nelts; ++ii) {
-	size_t cmp_len = MAX(auth_princs[ii].len, auth_princs[ii].len);
-	if (ngx_strncmp(&(auth_princs[ii]), princ, cmp_len) == 0) {
-	    return true;
-	}
+        size_t cmp_len = MAX(auth_princs[ii].len, princ->len);
+        if (ngx_strncmp(&(auth_princs[ii]), princ, cmp_len) == 0) {
+            return true;
+        }
     }
     return false;
 }
@@ -381,11 +381,11 @@ ngx_http_auth_spnego_token(
     token = r->headers_in.authorization->value;
 
     if (token.len < nego_sz ||
-	    ngx_strncasecmp(token.data, (u_char *) "Negotiate ", nego_sz) != 0) {
-	if (ngx_strncasecmp(
-		    token.data, (u_char *) "NTLM", sizeof("NTLM")) == 0) {
-	    spnego_log_error("Detected unsupported mechanism: NTLM");
-	}
+            ngx_strncasecmp(token.data, (u_char *) "Negotiate ", nego_sz) != 0) {
+        if (ngx_strncasecmp(
+        	    token.data, (u_char *) "NTLM", sizeof("NTLM")) == 0) {
+            spnego_log_error("Detected unsupported mechanism: NTLM");
+        }
         return NGX_DECLINED;
     }
 
@@ -732,7 +732,7 @@ ngx_http_auth_spnego_auth_user_gss(
             NULL, &output_token, NULL, NULL, NULL);
     if (GSS_ERROR(major_status)) {
         spnego_debug1("%s", get_gss_error(
-		r->pool, minor_status, "gss_accept_sec_context() failed"));
+        	r->pool, minor_status, "gss_accept_sec_context() failed"));
         spnego_error(NGX_DECLINED);
     }
 
@@ -767,7 +767,7 @@ ngx_http_auth_spnego_auth_user_gss(
     gss_release_name(&minor_status, &client_name);
     if (GSS_ERROR(major_status)) {
         spnego_log_error("%s", get_gss_error(r->pool, minor_status,
-		    "gss_display_name() failed"));
+        	    "gss_display_name() failed"));
         spnego_error(NGX_ERROR);
     }
 
@@ -780,9 +780,9 @@ ngx_http_auth_spnego_auth_user_gss(
 
         r->headers_in.user.data = ngx_pstrdup(r->pool, &user);
         if (NULL == r->headers_in.user.data) {
-	    spnego_log_error("ngx_pstrdup failed to allocate");
-	    spnego_error(NGX_ERROR);
-	}
+            spnego_log_error("ngx_pstrdup failed to allocate");
+            spnego_error(NGX_ERROR);
+        }
 
         r->headers_in.user.len = user.len;
         if (alcf->fqun == 0) {
@@ -867,8 +867,8 @@ ngx_http_auth_spnego_handler(
         spnego_debug1("ngx_http_auth_spnego_handler: returning %d", ctx->ret);
         /* If we got a 401, we should send back headers. */
         if (ctx->ret == NGX_HTTP_UNAUTHORIZED) {
-	    spnego_debug0("Basic auth failed");
-	    goto unauth;
+            spnego_debug0("Basic auth failed");
+            goto unauth;
         }
         return ctx->ret;
     }
@@ -880,13 +880,13 @@ ngx_http_auth_spnego_handler(
         /* There are chances that client knows about Negotiate but doesn't support GSSAPI */
         if (ret == NGX_DECLINED) {
             spnego_debug0("GSSAPI failed");
-	    goto unauth;
+            goto unauth;
         }
     }
 
     if (ret == NGX_DECLINED) {
 unauth:
-	spnego_debug0("Sending headers");
+        spnego_debug0("Sending headers");
         if (NGX_ERROR == ngx_http_auth_spnego_headers(r, ctx, NULL, alcf)) {
             return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
         }
@@ -899,8 +899,8 @@ unauth:
 
 
     if (!ngx_spnego_authorized_principal(&r->headers_in.user, alcf)) {
-	spnego_debug0("User not authorized");
-	return (ctx->ret = NGX_HTTP_UNAUTHORIZED);
+        spnego_debug0("User not authorized");
+        return (ctx->ret = NGX_HTTP_UNAUTHORIZED);
     }
 
     /* else NGX_OK */
