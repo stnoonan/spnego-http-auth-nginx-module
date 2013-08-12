@@ -355,6 +355,7 @@ ngx_http_auth_spnego_headers(
 
 static bool
 ngx_spnego_authorized_principal(
+    ngx_http_request_t * r,
     ngx_str_t *princ,
     ngx_http_auth_spnego_loc_conf_t *alcf)
 {
@@ -363,11 +364,13 @@ ngx_spnego_authorized_principal(
     }
     size_t ii = 0;
     ngx_str_t *auth_princs = alcf->auth_princs->elts;
+    spnego_debug1("Testing against %d auth princs", alcf->auth_princs->nelts);
     for (; ii < alcf->auth_princs->nelts; ++ii) {
         if (auth_princs[ii].len != princ->len) {
             continue;
         }
-        if (ngx_strncmp(&(auth_princs[ii].data), princ->data, princ->len) == 0) {
+        if (ngx_strncmp(auth_princs[ii].data, princ->data, princ->len) == 0) {
+	    spnego_debug2("Authorized user %.*s", princ->len, princ->data);
             return true;
         }
     }
@@ -914,7 +917,7 @@ unauth:
     }
 
 
-    if (!ngx_spnego_authorized_principal(&r->headers_in.user, alcf)) {
+    if (!ngx_spnego_authorized_principal(r, &r->headers_in.user, alcf)) {
         spnego_debug0("User not authorized");
         return (ctx->ret = NGX_HTTP_UNAUTHORIZED);
     }
