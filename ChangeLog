@@ -1,4 +1,23 @@
 Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Tue Oct 8 16:08:16 2013 -0400
+
+    Sane header behavior for multiple browsers
+    
+    Sending a token in a 401 causes Chrome to choke
+    Sending multiple NEGOTIATE headers causes Firefox to loop indefinitely
+    trying to authenticate.
+    Added a new ctx entry to track the output token.  This allows the header
+    to be set only once.  Future improvement would be to stop passing
+    both the token and the ctx.
+
+commit 6d90271edb3179055c604ce4d588754513627b78
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Tue Oct 8 12:04:50 2013 -0400
+
+    Update ChangeLog/README to reflect recent changes
+
+commit 13507c52e5d6fdcdf8ff219230a45338a5847173
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
 Date:   Tue Oct 8 12:02:39 2013 -0400
 
     Do not send token in reponse unless authenticated
