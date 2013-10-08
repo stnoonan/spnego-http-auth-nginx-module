@@ -267,7 +267,7 @@ ngx_http_auth_spnego_merge_loc_conf(
         ngx_str_t *auth_princs = conf->auth_princs->elts;
         for (; ii < conf->auth_princs->nelts; ++ii) {
             ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0,
-        	    "auth_spnego: auth_princs = %.*s", auth_princs[ii].len, auth_princs[ii].data);
+                "auth_spnego: auth_princs = %.*s", auth_princs[ii].len, auth_princs[ii].data);
         }
     }
 #endif
@@ -302,7 +302,9 @@ ngx_http_auth_spnego_headers(
     ngx_http_auth_spnego_loc_conf_t *alcf)
 {
     ngx_str_t value = ngx_null_string;
-    if (NULL == token) {
+    /* only use token if authorized as there appears to be a bug in
+     * Google Chrome when parsing a 401 Negotiate with a token */
+    if (NULL == token || ctx->ret != NGX_OK) {
         value.len = sizeof("Negotiate") - 1;
         value.data = (u_char *) "Negotiate";
     } else {
@@ -370,7 +372,7 @@ ngx_spnego_authorized_principal(
             continue;
         }
         if (ngx_strncmp(auth_princs[ii].data, princ->data, princ->len) == 0) {
-	    spnego_debug2("Authorized user %.*s", princ->len, princ->data);
+            spnego_debug2("Authorized user %.*s", princ->len, princ->data);
             return true;
         }
     }
@@ -399,7 +401,7 @@ ngx_http_auth_spnego_token(
     if (token.len < nego_sz ||
             ngx_strncasecmp(token.data, (u_char *) "Negotiate ", nego_sz) != 0) {
         if (ngx_strncasecmp(
-        	    token.data, (u_char *) "NTLM", sizeof("NTLM")) == 0) {
+                token.data, (u_char *) "NTLM", sizeof("NTLM")) == 0) {
             spnego_log_error("Detected unsupported mechanism: NTLM");
         }
         return NGX_DECLINED;
@@ -748,7 +750,7 @@ ngx_http_auth_spnego_auth_user_gss(
             NULL, &output_token, NULL, NULL, NULL);
     if (GSS_ERROR(major_status)) {
         spnego_debug1("%s", get_gss_error(
-        	r->pool, minor_status, "gss_accept_sec_context() failed"));
+            r->pool, minor_status, "gss_accept_sec_context() failed"));
         spnego_error(NGX_DECLINED);
     }
 
@@ -783,7 +785,7 @@ ngx_http_auth_spnego_auth_user_gss(
     gss_release_name(&minor_status, &client_name);
     if (GSS_ERROR(major_status)) {
         spnego_log_error("%s", get_gss_error(r->pool, minor_status,
-        	    "gss_display_name() failed"));
+            "gss_display_name() failed"));
         spnego_error(NGX_ERROR);
     }
 
