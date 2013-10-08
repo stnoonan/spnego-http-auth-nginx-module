@@ -1,4 +1,19 @@
 Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Tue Oct 8 12:02:39 2013 -0400
+
+    Do not send token in reponse unless authenticated
+    
+    This causes a parsing error in Google Chrome, causing it to
+    display a 320 instead of a 401.
+
+commit c6c51e7fd02d946a6863106fc27b054252e746a7
+Author: Sean Noonan <sean.noonan@twosigma.com>
+Date:   Mon Aug 12 17:52:53 2013 +0000
+
+    pass data, not data address for auth_princs
+
+commit 827a36357998625c9a19ece717bc4c5360984695
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
 Date:   Sat Aug 10 15:28:41 2013 -0400
 
     add size check of authorized principal

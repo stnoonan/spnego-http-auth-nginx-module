@@ -62,7 +62,7 @@ If you are using SPNEGO without SSL, it is recommended you disable basic
 authentication fallback, as the password would be sent in plaintext.  This
 is done by setting `auth_gss_allow_basic_fallback` in the config file.
 
-    auth_gss_allow_basic_fallback 0
+    auth_gss_allow_basic_fallback off
 
 
 Troubleshooting
