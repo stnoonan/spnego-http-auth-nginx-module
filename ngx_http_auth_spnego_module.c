@@ -97,6 +97,7 @@ typedef struct {
     ngx_str_t token; /* decoded Negotiate token */
     ngx_int_t head; /* non-zero flag if headers set */
     ngx_int_t ret; /* current return code */
+    ngx_str_t token_out_b64; /* base64 encoded output tokent */
 } ngx_http_auth_spnego_ctx_t;
 
 typedef struct {
@@ -760,24 +761,18 @@ ngx_http_auth_spnego_auth_user_gss(
     }
 
     if (output_token.length) {
-        ngx_str_t token = ngx_null_string;
-
         spnego_token.data = (u_char *) output_token.value;
         spnego_token.len = output_token.length - 1;
 
-        token.len = ngx_base64_encoded_length(spnego_token.len);
-        token.data = ngx_pcalloc(r->pool, token.len + 1);
-        if (NULL == token.data) {
+        ctx->token_out_b64.len = ngx_base64_encoded_length(spnego_token.len);
+        ctx->token_out_b64.data = ngx_pcalloc(r->pool, ctx->token_out_b64.len + 1);
+        if (NULL == ctx->token_out_b64.data) {
             spnego_log_error("Not enough memory");
             gss_release_buffer(&minor_status2, &output_token);
             spnego_error(NGX_ERROR);
         }
-        ngx_encode_base64(&token, &spnego_token);
+        ngx_encode_base64(&ctx->token_out_b64, &spnego_token);
         gss_release_buffer(&minor_status2, &output_token);
-
-        if (ngx_http_auth_spnego_headers(r, ctx, &token, alcf) == NGX_ERROR) {
-            spnego_error(NGX_ERROR);
-        }
     }
 
     /* getting user name at the other end of the request */
@@ -889,6 +884,10 @@ ngx_http_auth_spnego_handler(
             if (ctx->ret == NGX_HTTP_UNAUTHORIZED) {
                 spnego_debug0("Basic auth failed");
                 goto unauth;
+            } else if (!ngx_spnego_authorized_principal(
+                        r, &r->headers_in.user, alcf)) {
+                spnego_debug0("User not authorized");
+                goto unauth;
             }
             return ctx->ret;
         }
@@ -902,29 +901,31 @@ ngx_http_auth_spnego_handler(
         if (ret == NGX_DECLINED) {
             spnego_debug0("GSSAPI failed");
             goto unauth;
+        } else if (!ngx_spnego_authorized_principal(
+                    r, &r->headers_in.user, alcf)) {
+            spnego_debug0("User not authorized");
+            goto unauth;
         }
     }
 
     if (ret == NGX_DECLINED) {
 unauth:
         spnego_debug0("Sending headers");
+        ctx->ret = NGX_HTTP_UNAUTHORIZED;
         if (NGX_ERROR == ngx_http_auth_spnego_headers(r, ctx, NULL, alcf)) {
-            return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
+            ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR;
         }
-        return (ctx->ret = NGX_HTTP_UNAUTHORIZED);
+        return ctx->ret;
     }
 
     if (ret == NGX_ERROR) {
         return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
     }
 
-
-    if (!ngx_spnego_authorized_principal(r, &r->headers_in.user, alcf)) {
-        spnego_debug0("User not authorized");
-        return (ctx->ret = NGX_HTTP_UNAUTHORIZED);
-    }
-
     /* else NGX_OK */
+    if (ngx_http_auth_spnego_headers(r, ctx, &ctx->token_out_b64, alcf) == NGX_ERROR) {
+       return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
+    }
     spnego_debug3("SSO auth handling OUT: token.len=%d, head=%d, ret=%d",
             ctx->token.len, ctx->head, ret);
     return (ctx->ret = ret);
