@@ -585,7 +585,7 @@ ngx_http_auth_spnego_basic(
     if (code) {
         spnego_log_error("Kerberos error: Credentials failed");
         spnego_log_error("Kerberos error:", krb5_get_err_text(kcontext, code));
-        spnego_error(NGX_HTTP_UNAUTHORIZED);
+        spnego_error(NGX_DECLINED);
     }
     spnego_debug0("ngx_http_auth_spnego_basic: returning NGX_OK");
 
@@ -867,67 +867,84 @@ ngx_http_auth_spnego_handler(
     spnego_debug3("SSO auth handling IN: token.len=%d, head=%d, ret=%d",
             ctx->token.len, ctx->head, ctx->ret);
 
-    if (ctx->token.len && ctx->head)
+    if (ctx->token.len && ctx->head) {
+        spnego_debug1("Found token and head, returning %d", ctx->ret);
         return ctx->ret;
-    if (r->headers_in.user.data != NULL)
+    }
+
+    if (NULL != r->headers_in.user.data) {
+        spnego_debug0("User header set");
         return NGX_OK;
+    }
 
     spnego_debug0("Begin auth");
 
     if (alcf->allow_basic) {
         spnego_debug0("Detect basic auth");
         ret = ngx_http_auth_basic_user(r);
-        if (ret == NGX_OK) {
-            /* Got some valid auth_basic data */
-            ctx->ret = ngx_http_auth_spnego_basic(r, ctx, alcf);
-            spnego_debug1("ngx_http_auth_spnego_handler: returning %d", ctx->ret);
-            /* If we got a 401, we should send back headers. */
-            if (ctx->ret == NGX_HTTP_UNAUTHORIZED) {
+        if (NGX_OK == ret) {
+            spnego_debug0("Basic auth credentials supplied by client");
+            /* If basic auth is enabled and basic creds are supplied
+             * attempt basic auth.  If we attempt basic auth, we do
+             * not fall through to real SPNEGO */
+            if (NGX_DECLINED == ngx_http_auth_spnego_basic(r, ctx, alcf)) {
                 spnego_debug0("Basic auth failed");
-                goto unauth;
-            } else if (!ngx_spnego_authorized_principal(
-                        r, &r->headers_in.user, alcf)) {
-                spnego_debug0("User not authorized");
-                goto unauth;
+                return (ctx->ret = NGX_HTTP_FORBIDDEN);
             }
-            return ctx->ret;
+
+            if (!ngx_spnego_authorized_principal(r, &r->headers_in.user, alcf)) {
+                spnego_debug0("User not authorized");
+                return (ctx->ret = NGX_HTTP_FORBIDDEN);
+            }
+
+            spnego_debug0("Basic auth succeeded");
+            return (ctx->ret = NGX_OK);
         }
     }
 
+    /* Basic auth either disabled or not supplied by client */
+    spnego_debug0("Detect SPNEGO token");
     ret = ngx_http_auth_spnego_token(r, ctx);
-    if (ret == NGX_OK) {
-        /* client sent a reasonable Negotiate header */
+    if (NGX_OK == ret) {
+        spnego_debug0("Client sent a reasonable Negotiate header");
         ret = ngx_http_auth_spnego_auth_user_gss(r, ctx, alcf);
-        /* There are chances that client knows about Negotiate but doesn't support GSSAPI */
-        if (ret == NGX_DECLINED) {
+        /* There are chances that client knows about Negotiate
+         * but doesn't support GSSAPI. We could attempt to fall
+         * back to basic here... */
+        if (NGX_DECLINED == ret) {
             spnego_debug0("GSSAPI failed");
-            goto unauth;
-        } else if (!ngx_spnego_authorized_principal(
-                    r, &r->headers_in.user, alcf)) {
+            return (ctx->ret = NGX_HTTP_FORBIDDEN);
+        }
+
+        if (!ngx_spnego_authorized_principal(r, &r->headers_in.user, alcf)) {
             spnego_debug0("User not authorized");
-            goto unauth;
+            return (ctx->ret = NGX_HTTP_FORBIDDEN);
         }
+
+        spnego_debug0("GSSAPI auth succeeded");
     }
 
-    if (ret == NGX_DECLINED) {
-unauth:
-        spnego_debug0("Sending headers");
-        ctx->ret = NGX_HTTP_UNAUTHORIZED;
-        if (NGX_ERROR == ngx_http_auth_spnego_headers(r, ctx, NULL, alcf)) {
+    ngx_str_t *token_out_b64 = NULL;
+    switch(ret) {
+        case NGX_DECLINED: /* DECLINED, but not yet FORBIDDEN */
+            ctx->ret = NGX_HTTP_UNAUTHORIZED;
+            break;
+        case NGX_OK:
+            ctx->ret = NGX_OK;
+            token_out_b64 = &ctx->token_out_b64;
+            break;
+        case NGX_ERROR:
+        default:
             ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR;
-        }
-        return ctx->ret;
+            break;
     }
 
-    if (ret == NGX_ERROR) {
-        return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
+    if (NGX_ERROR == ngx_http_auth_spnego_headers(r, ctx, token_out_b64, alcf)) {
+        spnego_debug0("Error setting headers");
+        ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    /* else NGX_OK */
-    if (ngx_http_auth_spnego_headers(r, ctx, &ctx->token_out_b64, alcf) == NGX_ERROR) {
-       return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
-    }
     spnego_debug3("SSO auth handling OUT: token.len=%d, head=%d, ret=%d",
-            ctx->token.len, ctx->head, ret);
-    return (ctx->ret = ret);
+            ctx->token.len, ctx->head, ctx->ret);
+    return ctx->ret;
 }
