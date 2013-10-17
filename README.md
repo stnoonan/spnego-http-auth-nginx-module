@@ -11,7 +11,7 @@ Prerequisites
 
 Authentication has been tested with (at least) the following:
 
-* Nginx 1.2.6, 1.5.2
+* Nginx 1.2.6, 1.5.x
 * Internet Explorer 8.0.7600.16385
 * Firefox 10.0.6, 22.0
 * Chrome 20.0.1132.57, 28.0.1500.63
@@ -107,11 +107,6 @@ Debugging
 
 The module prints all sort of debugging information if nginx is compiled with
 the `--with-debug` option, and the `error_log` directive has a `debug` level.
-
-TODO
-----
-
-Revisit basic auth
 
 
 NTLM

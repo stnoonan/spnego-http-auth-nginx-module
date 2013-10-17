@@ -1,4 +1,48 @@
 Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Wed Oct 16 21:43:55 2013 -0400
+
+    Return 403 when user is unauthorized
+    
+    These changes disallow the continuous retries and provide for
+    significantly better behavior when used with Chrome
+    
+    Fixes stnoonan/spnego-http-auth-nginx-module#9
+
+commit 52bd58009d68d9e94664ac8c77139431267e9cf6
+Merge: a18b188 60ab7e3
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Wed Oct 16 06:15:36 2013 -0700
+
+    Merge pull request #10 from MAXuk/patch-1
+    
+    Include com_err.h to define error_message
+    
+    Remove make error: "warning: implicit declaration of function 'error_message'"
+
+commit 60ab7e330f06c2dc329f1e82e99d0fb9a94cfac5
+Author: MAXuk <max-2209@mail.ru>
+Date:   Wed Oct 16 16:58:26 2013 +0400
+
+    Remove "warning: implicit declaration of function 'error_message'"
+    
+    "
+    cc -c -pipe  -O -W -Wall -Wpointer-arith -Wno-unused-parameter -Werror -g -I /usr/local/include  -I src/core  -I src/event  -I src/event/modules  -I src/os/unix  -I zlib-1.2.8  -I objs  -I src/http  -I src/http/modules  -I src/mail  -o objs/addon/spnego-http-auth-nginx-module-master/ngx_http_auth_spnego_module.o  spnego-http-auth-nginx-module-master/ngx_http_auth_spnego_module.c
+    cc1: warnings being treated as errors
+    spnego-http-auth-nginx-module-master/ngx_http_auth_spnego_module.c: In function 'ngx_http_auth_spnego_basic':
+    spnego-http-auth-nginx-module-master/ngx_http_auth_spnego_module.c:496: warning: implicit declaration of function 'error_message'
+    *** [objs/addon/spnego-http-auth-nginx-module-master/ngx_http_auth_spnego_module.o] Error code 1
+    "
+    
+    Remove this error where make nginx --add-module=spnego-http-auth-nginx-module-master
+
+commit a18b18801f0ea75723dd14ad912596788f8cef0d
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Tue Oct 8 16:11:35 2013 -0400
+
+    ChangeLog update
+
+commit 56109515cbef41fe603aaba08f3e0895e3b158f7
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
 Date:   Tue Oct 8 16:08:16 2013 -0400
 
     Sane header behavior for multiple browsers
