@@ -115,6 +115,7 @@ typedef struct {
 #define SPNEGO_NGX_CONF_FLAGS NGX_HTTP_MAIN_CONF\
     | NGX_HTTP_SRV_CONF\
     | NGX_HTTP_LOC_CONF\
+    | NGX_HTTP_LMT_CONF\
     | NGX_CONF_FLAG
 
 /* Module Directives */
