@@ -31,6 +31,7 @@ and pass an `--add-module` option to nginx configure:
 
     ./configure --add-module=spnego-http-auth-nginx-module
 
+Note that if it isn't clear, you do need KRB5 (MIT or Heimdal) header files installed.  On Debian based distributions, including Ubuntu, this is the krb5-multidev, libkrb5-dev, heimdal-dev, or heimdal-multidev package depending on your environment.  On other Linux distributions, you want the development libraries that provide gssapi_krb5.h.
 
 Configuration reference
 -----------------------
