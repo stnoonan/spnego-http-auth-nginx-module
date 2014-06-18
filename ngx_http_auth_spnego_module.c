@@ -37,7 +37,11 @@
 #include <krb5.h>
 #include <com_err.h>
 
-#define krb5_get_err_text(context,code) error_message(code)
+
+#define spnego_log_krb5_error(context,code) {\
+    const char* ___kerror = krb5_get_error_message(context, code)\
+    spnego_debug2("Kerberos error: %d, %s", code , ___kerror);\
+    krb5_free_error_message( context, ___kerror  ); }
 #define spnego_error(code) ret = code; goto end
 #define spnego_debug0(msg) ngx_log_debug0(\
         NGX_LOG_DEBUG_HTTP, r->connection->log, 0, msg)
@@ -495,14 +499,14 @@ ngx_http_auth_spnego_basic(
 
     if (kret) {
         spnego_log_error("Kerberos error:  Unable to parse service name");
-        spnego_log_error("Kerberos error:", krb5_get_err_text(kcontext, code));
+        spnego_log_krb5_error(kcontext, code);
         spnego_error(NGX_ERROR);
     }
 
     code = krb5_unparse_name(kcontext, server, &name);
     if (code) {
         spnego_log_error("Kerberos error: Cannot unparse servicename");
-        spnego_log_error("Kerberos error:", krb5_get_err_text(kcontext, code));
+        spnego_log_krb5_error(kcontext, code);
         spnego_error(NGX_ERROR);
     }
 
@@ -561,7 +565,7 @@ ngx_http_auth_spnego_basic(
     if (code) {
         spnego_log_error("Kerberos error: Unable to parse username");
         spnego_debug1("username is %s.", (const char *) user.data);
-        spnego_log_error("Kerberos error:", krb5_get_err_text(kcontext, code));
+        spnego_log_krb5_error(kcontext, code);
         spnego_error(NGX_ERROR);
     }
 
@@ -570,7 +574,7 @@ ngx_http_auth_spnego_basic(
     code = krb5_unparse_name(kcontext, client, &name);
     if (code) {
         spnego_log_error("Kerberos error: Cannot unparse username");
-        spnego_log_error("Kerberos error:", krb5_get_err_text(kcontext, code));
+        spnego_log_krb5_error(kcontext, code);
         spnego_error(NGX_ERROR);
     }
 
@@ -585,7 +589,7 @@ ngx_http_auth_spnego_basic(
 
     if (code) {
         spnego_log_error("Kerberos error: Credentials failed");
-        spnego_log_error("Kerberos error:", krb5_get_err_text(kcontext, code));
+        spnego_log_krb5_error(kcontext, code);
         spnego_error(NGX_DECLINED);
     }
     spnego_debug0("ngx_http_auth_spnego_basic: returning NGX_OK");
