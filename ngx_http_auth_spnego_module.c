@@ -461,7 +461,7 @@ ngx_http_auth_spnego_basic(
     krb5_principal client = NULL;
     krb5_principal server = NULL;
     krb5_creds creds;
-    krb5_get_init_creds_opt gic_options;
+    krb5_get_init_creds_opt *gic_options = NULL;
     int kret = 0;
     char *name = NULL;
     char *p = NULL;
@@ -578,12 +578,12 @@ ngx_http_auth_spnego_basic(
         spnego_error(NGX_ERROR);
     }
 
-    krb5_get_init_creds_opt_init(&gic_options);
+    krb5_get_init_creds_opt_alloc(kcontext, &gic_options);
 
     code =
         krb5_get_init_creds_password(kcontext, &creds, client,
                 (char *) r->headers_in.passwd.data,
-                NULL, NULL, 0, NULL, &gic_options);
+                NULL, NULL, 0, NULL, gic_options);
 
     krb5_free_cred_contents(kcontext, &creds);
 
@@ -603,6 +603,9 @@ end:
         krb5_free_principal(kcontext, client);
     if (server)
         krb5_free_principal(kcontext, server);
+
+    krb5_get_init_creds_opt_free(kcontext, gic_options);
+
     krb5_free_context(kcontext);
 
     return ret;
