@@ -39,7 +39,7 @@
 
 
 #define spnego_log_krb5_error(context,code) {\
-    const char* ___kerror = krb5_get_error_message(context, code)\
+    const char* ___kerror = krb5_get_error_message(context, code);\
     spnego_debug2("Kerberos error: %d, %s", code , ___kerror);\
     krb5_free_error_message( context, ___kerror  ); }
 #define spnego_error(code) ret = code; goto end
