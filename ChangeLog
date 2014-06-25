@@ -1,4 +1,56 @@
 Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Tue Jun 24 21:40:40 2014 -0400
+
+    Add missing semicolon in spnego_log_krb5_error
+    
+    This resolves compilation errors when --with-debug is passed
+    to the configure script.
+    
+    Closes #18
+
+commit 34b74d3185b38720754cf677b2a8eb82682587e3
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Wed Jun 18 19:44:07 2014 -0400
+
+    Replace deprecated krb5_get_init_creds_opt_init()
+    
+    The preferred method is to use krb5_get_init_creds_opt_{alloc,free},
+    as it removes a static structure that is unable to be extended.
+    
+    With credit to MAXuk
+
+commit cf04148da10b1e4ce295f9617dcf822045bf9dbf
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Wed Jun 18 19:35:44 2014 -0400
+
+    Use krb5_get_error_message
+    
+    Contributed by planbnet.  This should provide extended
+    error messages from the underlying krb5 library when
+    there are failures.
+
+commit 4a43f2f35749b38c36ffff7474284f91c1a59b8e
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Wed Jun 18 19:06:20 2014 -0400
+
+    Add dependency information to README.md
+    
+    Closes #16.
+
+commit 50b24e59c0925b42a0b3e60401ee3741b1d46717
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Tue Apr 22 09:10:26 2014 -0400
+
+    allow auth_gss directives in limit_except blocks
+
+commit 46e400cb87f3576a27731cce11c2f6f421a7cefd
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Wed Oct 16 21:55:08 2013 -0400
+
+    Update ChangeLog and README
+
+commit d335e081f6823276c18c1fce1cc195e57a3c83af
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
 Date:   Wed Oct 16 21:43:55 2013 -0400
 
     Return 403 when user is unauthorized
