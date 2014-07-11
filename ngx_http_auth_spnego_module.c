@@ -809,7 +809,7 @@ ngx_http_auth_spnego_auth_user_gss(
         r->headers_in.user.len = user.len;
         if (alcf->fqun == 0) {
             p = ngx_strchr(r->headers_in.user.data, '@');
-            if (p != NULL && ngx_strcmp(p + 1, alcf->realm.data) == 0) {
+            if (p != NULL &&  ngx_strncmp(p + 1, alcf->realm.data, alcf->realm.len) == 0) {
                 *p = '\0';
                 r->headers_in.user.len = ngx_strlen(r->headers_in.user.data);
             }
