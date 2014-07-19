@@ -11,11 +11,11 @@ Prerequisites
 
 Authentication has been tested with (at least) the following:
 
-* Nginx 1.2.6, 1.5.x
-* Internet Explorer 8.0.7600.16385
-* Firefox 10.0.6, 22.0
-* Chrome 20.0.1132.57, 28.0.1500.63
-* Curl 7.19.5 (GSS-Negotiate), 7.27.0 (SPNEGO/fbopenssl)
+* Nginx 1.2 through 1.7
+* Internet Explorer 8 and above
+* Firefox 10 and above
+* Chrome 20 and above
+* Curl 7.x (GSS-Negotiate), 7.x (SPNEGO/fbopenssl)
 
 The underlying kerberos library used for these tests was MIT KRB5 v1.8.
 
@@ -117,4 +117,8 @@ Note that the module does not support [NTLMSSP](http://en.wikipedia.org/wiki/NTL
 in Negotiate. NTLM, both v1 and v2, is an exploitable protocol and should be avoided
 where possible.
 
+Help
+----
 
+If you're unable to figure things out, please feel free to open an 
+issue on Github and I'll do my best to help you.
