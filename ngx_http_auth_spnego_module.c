@@ -527,7 +527,7 @@ ngx_http_auth_spnego_basic(
                 spnego_log_error("Not enough memory");
                 spnego_error(NGX_ERROR);
             }
-            ngx_sprintf(new_user, "%s", user.data);
+            ngx_snprintf(new_user, user.len, "%s", user.data);
             new_user[len-1] = '\0';
             r->headers_in.user.len = len;
             ngx_pfree(r->pool, r->headers_in.user.data);
@@ -548,7 +548,7 @@ ngx_http_auth_spnego_basic(
                     spnego_log_error("Not enough memory");
                     spnego_error(NGX_ERROR);
                 }
-                ngx_sprintf(new_user,"%s@%s%Z",user.data,alcf->realm.data);
+                ngx_snprintf(new_user, len, "%s@%s%Z",user.data,alcf->realm.data);
                 new_user[len-1] = '\0';
                 r->headers_in.user.len = len;
                 ngx_pfree(r->pool, r->headers_in.user.data);
