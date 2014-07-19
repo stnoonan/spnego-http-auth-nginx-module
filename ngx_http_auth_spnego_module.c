@@ -540,7 +540,7 @@ ngx_http_auth_spnego_basic(
         ngx_snprintf(user.data, user.len, "%V%Z", &r->headers_in.user);
         if(alcf->force_realm && alcf->realm.data){
             p = ngx_strchr(user.data,'@');
-            if (ngx_strcmp(p + 1, alcf->realm.data) != 0) {
+            if (ngx_strncmp(p + 1, alcf->realm.data, alcf->realm.len) != 0) {
                 *p = '\0';
                 len = user.len + 2 + alcf->realm.len;
                 new_user = ngx_pcalloc(r->pool, len);
@@ -686,7 +686,7 @@ ngx_http_auth_spnego_auth_user_gss(
     ngx_http_auth_spnego_loc_conf_t * alcf)
 {
     ngx_int_t ret = NGX_DECLINED;
-    char *p;
+    u_char *pu;
     ngx_str_t spnego_token = ngx_null_string;
     OM_uint32 major_status, minor_status, minor_status2;
     gss_buffer_desc service = GSS_C_EMPTY_BUFFER;
@@ -808,9 +808,10 @@ ngx_http_auth_spnego_auth_user_gss(
 
         r->headers_in.user.len = user.len;
         if (alcf->fqun == 0) {
-            p = ngx_strchr(r->headers_in.user.data, '@');
-            if (p != NULL &&  ngx_strncmp(p + 1, alcf->realm.data, alcf->realm.len) == 0) {
-                *p = '\0';
+            pu = ngx_strlchr(r->headers_in.user.data,
+                r->headers_in.user.data + r->headers_in.user.len, '@');
+            if (pu != NULL && ngx_strncmp(pu + 1, alcf->realm.data, alcf->realm.len) == 0) {
+                *pu = '\0';
                 r->headers_in.user.len = ngx_strlen(r->headers_in.user.data);
             }
         }
