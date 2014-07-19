@@ -1,4 +1,45 @@
 Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Sat Jul 19 07:57:17 2014 -0400
+
+    Use strlchr and strncmp where needed
+
+commit de1924735de6c3fec862929efa9684d44c088f6e
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Sat Jul 19 07:33:46 2014 -0400
+
+    Convert remaining sprintf to snprintf
+
+commit 9519ab75de5b63f82fc018c91884b147bd70a670
+Merge: c1ce1d6 52d9c89
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Fri Jul 11 09:07:15 2014 -0400
+
+    Merge pull request #21 from aroth-arsoft/master
+    
+    fix for issue remote_user and realm #19
+
+commit 52d9c89447a27da64743e2e7e40f4ea783565163
+Author: Andreas Roth <aroth@arsoft-online.com>
+Date:   Fri Jul 11 14:01:06 2014 +0200
+
+    use ngx_strncmp instead of ngx_strcmp to ensure to compare only the
+    valid part of the realm
+
+commit c1ce1d642ef38b59896182ef4a34418283132644
+Merge: 9430baa 70f4095
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Tue Jun 24 21:41:06 2014 -0400
+
+    Merge branch 'master' of github.com:stnoonan/spnego-http-auth-nginx-module
+
+commit 9430baa9ec1bf2d537ddbb93c166e98d3db89057
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Tue Jun 24 21:40:55 2014 -0400
+
+    Update ChangeLog
+
+commit 8cc8aa56e402da9057a66374040c0b8604069dec
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
 Date:   Tue Jun 24 21:40:40 2014 -0400
 
     Add missing semicolon in spnego_log_krb5_error
@@ -7,6 +48,15 @@ Date:   Tue Jun 24 21:40:40 2014 -0400
     to the configure script.
     
     Closes #18
+
+commit 70f4095ce0dc9e9469e244bd1d238231c7e27b40
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Wed Jun 18 20:57:32 2014 -0400
+
+    Clarify the behavior of the module when realm is specified
+    
+    The default realm is stripped, auth_gss_format_full can be used
+    to override this behavior.
 
 commit 34b74d3185b38720754cf677b2a8eb82682587e3
 Author: Sean Timothy Noonan <stnoonan@obsolescence.net>

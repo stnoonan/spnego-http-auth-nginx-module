@@ -6,7 +6,7 @@ NPKG=$(NAME)-$(VERSION)
 NHEAD=$(NAME)-HEAD
 NCURRENT=$(NAME)-current
 
-GIT-FILES:=$(shell git ls-files)
+GIT-FILES:=$(shell git ls-files | grep -v ChangeLog)
 FILES=ChangeLog $(GIT-FILES)
 
 ChangeLog: $(GIT-FILES)
