@@ -673,7 +673,10 @@ env_ktname(
         return false;
     }
     ngx_snprintf((u_char *) ktname, kt_sz, "KRB5_KTNAME=%V%Z", keytab);
-    putenv(ktname);
+    if (putenv(ktname) != 0) {
+        spnego_debug0("Failed to update environment with keytab location");
+        return false;
+    }
 
     spnego_debug1("Use keytab %V", keytab);
     return true;
