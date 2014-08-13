@@ -661,20 +661,35 @@ ngx_http_auth_spnego_set_bogus_authorization(
 }
 
 static bool
-env_ktname(
+use_keytab(
     ngx_http_request_t * r,
     ngx_str_t *keytab)
 {
     char *ktname = NULL;
-    size_t kt_sz = sizeof("KRB5_KTNAME=") + keytab->len;
+    size_t ktenv_sz = sizeof("KRB5_KTNAME=") + keytab->len;
 
-    ktname = (char *) ngx_pcalloc(r->pool, kt_sz + 1);
+    ktname = (char *) ngx_pcalloc(r->pool, ktenv_sz + 1);
     if (NULL == ktname) {
         return false;
     }
-    ngx_snprintf((u_char *) ktname, kt_sz, "KRB5_KTNAME=%V%Z", keytab);
+    ngx_snprintf((u_char *) ktname, ktenv_sz, "KRB5_KTNAME=%V%Z", keytab);
     if (putenv(ktname) != 0) {
         spnego_debug0("Failed to update environment with keytab location");
+        return false;
+    }
+
+    size_t kt_sz = keytab->len + 1;
+    char *kt = (char *) ngx_pcalloc(r->pool, kt_sz);
+    if (NULL == kt) {
+        return false;
+    }
+    ngx_snprintf((u_char *) ktname, kt_sz, "%V%Z", kt);
+    OM_uint32 major_status, minor_status = 0;
+    major_status = gsskrb5_register_acceptor_identity(ktname);
+    if (GSS_ERROR(major_status)) {
+        spnego_log_error("%s failed to register keytab: %s", get_gss_error(
+                    r->pool, minor_status, "gsskrb5_register_acceptor_identity() failed"),
+                (u_char *) keytab);
         return false;
     }
 
@@ -705,8 +720,8 @@ ngx_http_auth_spnego_auth_user_gss(
 
     spnego_debug0("GSSAPI authorizing");
 
-    if (!env_ktname(r, &alcf->keytab)) {
-        spnego_debug0("Failed to set KRB5_KTNAME");
+    if (!use_keytab(r, &alcf->keytab)) {
+        spnego_debug0("Failed to specify keytab");
         spnego_error(NGX_ERROR);
     }
 
