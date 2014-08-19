@@ -665,15 +665,13 @@ use_keytab(
     ngx_http_request_t * r,
     ngx_str_t *keytab)
 {
-    char *ktname = NULL;
-    size_t ktenv_sz = sizeof("KRB5_KTNAME=") + keytab->len;
-
-    ktname = (char *) ngx_pcalloc(r->pool, ktenv_sz + 1);
-    if (NULL == ktname) {
+    size_t kt_env_sz = sizeof("KRB5_KTNAME=") + keytab->len;
+    char *kt_env = (char *) ngx_pcalloc(r->pool, kt_env_sz + 1);
+    if (NULL == kt_env) {
         return false;
     }
-    ngx_snprintf((u_char *) ktname, ktenv_sz, "KRB5_KTNAME=%V%Z", keytab);
-    if (putenv(ktname) != 0) {
+    ngx_snprintf((u_char *) kt_env, kt_env_sz, "KRB5_KTNAME=%V%Z", keytab);
+    if (putenv(kt_env) != 0) {
         spnego_debug0("Failed to update environment with keytab location");
         return false;
     }
@@ -683,13 +681,13 @@ use_keytab(
     if (NULL == kt) {
         return false;
     }
-    ngx_snprintf((u_char *) ktname, kt_sz, "%V%Z", kt);
+    ngx_snprintf((u_char *) kt, kt_sz, "%V%Z", keytab);
     OM_uint32 major_status, minor_status = 0;
-    major_status = gsskrb5_register_acceptor_identity(ktname);
+    major_status = gsskrb5_register_acceptor_identity(kt);
     if (GSS_ERROR(major_status)) {
-        spnego_log_error("%s failed to register keytab: %s", get_gss_error(
-                    r->pool, minor_status, "gsskrb5_register_acceptor_identity() failed"),
-                (u_char *) keytab);
+        spnego_log_error("%s failed to register keytab", get_gss_error(
+                    r->pool, minor_status,
+                    "gsskrb5_register_acceptor_identity() failed"));
         return false;
     }
 
