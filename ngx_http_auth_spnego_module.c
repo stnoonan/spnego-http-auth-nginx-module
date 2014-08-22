@@ -622,20 +622,22 @@ ngx_int_t
 ngx_http_auth_spnego_set_bogus_authorization(
     ngx_http_request_t *r)
 {
+    const char *bogus_passwd = "bogus_auth_gss_passwd";
     ngx_str_t plain, encoded, final;
 
     if (r->headers_in.user.len == 0) {
         return NGX_DECLINED;
     }
 
-    /* including \0 from sizeof because it's "user:password" */
-    plain.len = r->headers_in.user.len + sizeof("bogus");
+    /* +1 because of the ":" in "user:password" */
+    plain.len = r->headers_in.user.len + ngx_strlen(bogus_passwd) + 1;
     plain.data = ngx_pnalloc(r->pool, plain.len);
     if (NULL == plain.data) {
         return NGX_ERROR;
     }
 
-    ngx_snprintf(plain.data, plain.len, "%V:bogus", &r->headers_in.user);
+    ngx_snprintf(plain.data, plain.len, "%V:%s",
+            &r->headers_in.user, bogus_passwd);
 
     encoded.len = ngx_base64_encoded_length(plain.len);
     encoded.data = ngx_pnalloc(r->pool, encoded.len);
