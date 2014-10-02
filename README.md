@@ -65,6 +65,16 @@ is done by setting `auth_gss_allow_basic_fallback` in the config file.
 
     auth_gss_allow_basic_fallback off
 
+The remote user header in nginx can only be set by doing basic authentication.
+Thus, this module sets a bogus basic auth header that will reach your backend
+application in order to set this header/nginx variable.  The easiest way to disable
+this behavior is to add the following configuration to your location config.
+
+    proxy_set_header Authorization "";
+    
+A future version of the module may make this behavior an option, but this should
+be a sufficient workaround for now.
+
 
 Troubleshooting
 ---------------
