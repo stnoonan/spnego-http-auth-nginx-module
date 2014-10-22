@@ -533,7 +533,9 @@ ngx_http_auth_spnego_basic(
             ngx_pfree(r->pool, r->headers_in.user.data);
             r->headers_in.user.data = new_user;
             spnego_debug1("set user to %s", new_user);
-            ngx_http_auth_spnego_set_bogus_authorization(r);
+            if (ngx_http_auth_spnego_set_bogus_authorization(r) != NGX_OK) {
+                spnego_log_error("Failed to set remote_user");
+            }
         }
     } else {
         user.data = ngx_palloc(r->pool, user.len);
@@ -554,7 +556,9 @@ ngx_http_auth_spnego_basic(
                 ngx_pfree(r->pool, r->headers_in.user.data);
                 r->headers_in.user.data = new_user;
                 spnego_debug2("set user to %s, realm %s included", new_user, alcf->realm.data);
-                ngx_http_auth_spnego_set_bogus_authorization(r);
+                if (ngx_http_auth_spnego_set_bogus_authorization(r) != NGX_OK) {
+                    spnego_log_error("Failed to set remote_user");
+                }
                 spnego_debug1("after bogus authorization user.data is %s", (const char *) user.data);
             }
         }
@@ -626,6 +630,7 @@ ngx_http_auth_spnego_set_bogus_authorization(
     ngx_str_t plain, encoded, final;
 
     if (r->headers_in.user.len == 0) {
+        spnego_debug0("ngx_http_auth_spnego_set_bogus_authorization: no user NGX_DECLINED");
         return NGX_DECLINED;
     }
 
@@ -659,6 +664,7 @@ ngx_http_auth_spnego_set_bogus_authorization(
     r->headers_in.authorization->value.len = final.len;
     r->headers_in.authorization->value.data = final.data;
 
+    spnego_debug0("ngx_http_auth_spnego_set_bogus_authorization: bogus user set");
     return NGX_OK;
 }
 
@@ -835,7 +841,9 @@ ngx_http_auth_spnego_auth_user_gss(
         }
 
         /* this for the sake of ngx_http_variable_remote_user */
-        ngx_http_auth_spnego_set_bogus_authorization(r);
+        if (ngx_http_auth_spnego_set_bogus_authorization(r) != NGX_OK) {
+            spnego_log_error("Failed to set remote_user");
+        }
         spnego_debug1("user is %V", &r->headers_in.user);
     }
 
