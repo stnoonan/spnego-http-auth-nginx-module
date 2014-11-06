@@ -31,7 +31,12 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 
+#ifdef WIN32
+typedef char bool;
+enum { false, true };
+#else
 #include <stdbool.h>
+#endif
 #include <gssapi/gssapi.h>
 #include <gssapi/gssapi_krb5.h>
 #include <krb5.h>
@@ -51,8 +56,8 @@
         NGX_LOG_DEBUG_HTTP, r->connection->log, 0, msg, one, two)
 #define spnego_debug3(msg, one, two, three) ngx_log_debug3(\
         NGX_LOG_DEBUG_HTTP, r->connection->log, 0, msg, one, two, three)
-#define spnego_log_error(fmt, args...) ngx_log_error(\
-        NGX_LOG_ERR, r->connection->log, 0, fmt, ##args)
+#define spnego_log_error(fmt, ...) ngx_log_error(\
+        NGX_LOG_ERR, r->connection->log, 0, fmt, __VA_ARGS__)
 
 /* Module handler */
 static ngx_int_t ngx_http_auth_spnego_handler(ngx_http_request_t *);
@@ -368,11 +373,11 @@ ngx_spnego_authorized_principal(
     ngx_str_t *princ,
     ngx_http_auth_spnego_loc_conf_t *alcf)
 {
+    size_t ii = 0;
+    ngx_str_t *auth_princs = alcf->auth_princs->elts;
     if (NGX_CONF_UNSET_PTR == alcf->auth_princs) {
         return true;
     }
-    size_t ii = 0;
-    ngx_str_t *auth_princs = alcf->auth_princs->elts;
     spnego_debug1("Testing against %d auth princs", alcf->auth_princs->nelts);
     for (; ii < alcf->auth_princs->nelts; ++ii) {
         if (auth_princs[ii].len != princ->len) {
@@ -684,22 +689,24 @@ use_keytab(
         return false;
     }
 
-    size_t kt_sz = keytab->len + 1;
-    char *kt = (char *) ngx_pcalloc(r->pool, kt_sz);
-    if (NULL == kt) {
-        return false;
-    }
-    ngx_snprintf((u_char *) kt, kt_sz, "%V%Z", keytab);
-    OM_uint32 major_status, minor_status = 0;
-    major_status = gsskrb5_register_acceptor_identity(kt);
-    if (GSS_ERROR(major_status)) {
-        spnego_log_error("%s failed to register keytab", get_gss_error(
-                    r->pool, minor_status,
-                    "gsskrb5_register_acceptor_identity() failed"));
-        return false;
-    }
+    {
+        size_t kt_sz = keytab->len + 1;
+        OM_uint32 major_status, minor_status = 0;
+        char *kt = (char *) ngx_pcalloc(r->pool, kt_sz);
+        if (NULL == kt) {
+            return false;
+        }
+        ngx_snprintf((u_char *) kt, kt_sz, "%V%Z", keytab);
+        major_status = gsskrb5_register_acceptor_identity(kt);
+        if (GSS_ERROR(major_status)) {
+            spnego_log_error("%s failed to register keytab", get_gss_error(
+                        r->pool, minor_status,
+                        "gsskrb5_register_acceptor_identity() failed"));
+            return false;
+        }
 
-    spnego_debug1("Use keytab %V", keytab);
+        spnego_debug1("Use keytab %V", keytab);
+    }
     return true;
 }
 
@@ -732,6 +739,7 @@ ngx_http_auth_spnego_auth_user_gss(
     }
 
     if (alcf->srvcname.len > 0) {
+        gss_buffer_desc human_readable_gss_name = GSS_C_EMPTY_BUFFER;
         /* if there is a specific service prinicipal set in the configuration
          * file, we need to use it.  Otherwise, use the default of no credentials
          */
@@ -752,7 +760,6 @@ ngx_http_auth_spnego_auth_user_gss(
                     (u_char *) service.value);
             spnego_error(NGX_ERROR);
         }
-        gss_buffer_desc human_readable_gss_name = GSS_C_EMPTY_BUFFER;
         major_status = gss_display_name(&minor_status, my_gss_name,
                 &human_readable_gss_name, NULL);
 
@@ -879,6 +886,7 @@ ngx_http_auth_spnego_handler(
     ngx_int_t ret = NGX_DECLINED;
     ngx_http_auth_spnego_ctx_t *ctx;
     ngx_http_auth_spnego_loc_conf_t *alcf;
+    ngx_str_t *token_out_b64 = NULL;
 
     alcf = ngx_http_get_module_loc_conf(r, ngx_http_auth_spnego_module);
 
@@ -959,7 +967,6 @@ ngx_http_auth_spnego_handler(
         spnego_debug0("GSSAPI auth succeeded");
     }
 
-    ngx_str_t *token_out_b64 = NULL;
     switch(ret) {
         case NGX_DECLINED: /* DECLINED, but not yet FORBIDDEN */
             ctx->ret = NGX_HTTP_UNAUTHORIZED;
