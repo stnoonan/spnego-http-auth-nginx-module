@@ -269,6 +269,10 @@ ngx_http_auth_spnego_merge_loc_conf(
             conf->srvcname.data, conf->srvcname.data);
     ngx_conf_log_error(NGX_LOG_INFO, cf, 0, "auth_spnego: fqun = %i",
             conf->fqun);
+    ngx_conf_log_error(NGX_LOG_INFO, cf, 0, "auth_spnego: allow_basic = %i",
+            conf->allow_basic);
+    ngx_conf_log_error(NGX_LOG_INFO, cf, 0, "auth_spnego: force_realm = %i",
+            conf->force_realm);
     if (NGX_CONF_UNSET_PTR != conf->auth_princs) {
         size_t ii = 0;
         ngx_str_t *auth_princs = conf->auth_princs->elts;
@@ -297,6 +301,37 @@ ngx_http_auth_spnego_init(
     }
 
     *h = ngx_http_auth_spnego_handler;
+
+    return NGX_OK;
+}
+
+static ngx_int_t
+ngx_http_auth_spnego_headers_basic_only(
+    ngx_http_request_t *r,
+    ngx_http_auth_spnego_ctx_t *ctx,
+    ngx_http_auth_spnego_loc_conf_t *alcf)
+{
+    ngx_str_t value = ngx_null_string;
+    value.len = sizeof("Basic realm=\"\"") - 1 + alcf->realm.len;
+    value.data = ngx_pcalloc(r->pool, value.len);
+    if (NULL == value.data) {
+        return NGX_ERROR;
+    }
+    ngx_snprintf(value.data, value.len, "Basic realm=\"%V\"",
+            &alcf->realm);
+    r->headers_out.www_authenticate =
+        ngx_list_push(&r->headers_out.headers);
+    if (NULL == r->headers_out.www_authenticate) {
+        return NGX_ERROR;
+    }
+
+    r->headers_out.www_authenticate->hash = 1;
+    r->headers_out.www_authenticate->key.len = sizeof("WWW-Authenticate") - 1;
+    r->headers_out.www_authenticate->key.data = (u_char *) "WWW-Authenticate";
+    r->headers_out.www_authenticate->value.len = value.len;
+    r->headers_out.www_authenticate->value.data = value.data;
+
+    ctx->head = 1;
 
     return NGX_OK;
 }
@@ -948,12 +983,32 @@ ngx_http_auth_spnego_handler(
          * back to basic here... */
         if (NGX_DECLINED == ret) {
             spnego_debug0("GSSAPI failed");
-            return (ctx->ret = NGX_HTTP_FORBIDDEN);
+            if(alcf->allow_basic) {
+                if (NGX_ERROR == ngx_http_auth_spnego_headers_basic_only(r, ctx, alcf)) {
+                    spnego_debug0("Error setting headers");
+                    ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR;
+                }
+                else
+                    ctx->ret = NGX_HTTP_UNAUTHORIZED;
+            } else {
+                ctx->ret = NGX_HTTP_FORBIDDEN;
+            }
+            return ctx->ret;
         }
 
         if (!ngx_spnego_authorized_principal(r, &r->headers_in.user, alcf)) {
             spnego_debug0("User not authorized");
-            return (ctx->ret = NGX_HTTP_FORBIDDEN);
+            if(alcf->allow_basic) {
+                if (NGX_ERROR == ngx_http_auth_spnego_headers_basic_only(r, ctx, alcf)) {
+                    spnego_debug0("Error setting headers");
+                    ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR;
+                }
+                else
+                    ctx->ret = NGX_HTTP_UNAUTHORIZED;
+            } else {
+                ctx->ret = NGX_HTTP_FORBIDDEN;
+            }
+            return ctx->ret;
         }
 
         spnego_debug0("GSSAPI auth succeeded");
