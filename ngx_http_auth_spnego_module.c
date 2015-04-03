@@ -978,6 +978,10 @@ ngx_http_auth_spnego_handler(
     if (NGX_OK == ret) {
         spnego_debug0("Client sent a reasonable Negotiate header");
         ret = ngx_http_auth_spnego_auth_user_gss(r, ctx, alcf);
+        if (NGX_ERROR == ret) {
+            spnego_debug0("GSSAPI failed");
+            return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
+        }
         /* There are chances that client knows about Negotiate
          * but doesn't support GSSAPI. We could attempt to fall
          * back to basic here... */

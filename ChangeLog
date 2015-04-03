@@ -1,4 +1,85 @@
 Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Mon Mar 16 15:23:37 2015 -0400
+
+    Link to libgssapi in FreeBSD
+    
+    This fixes the inability of this module to compile
+    on FreeBSD 10.1
+
+commit e59a22d3cf78fe756d7b381ad0b88dfd7fa9aad6
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Tue Oct 21 21:13:12 2014 -0400
+
+    Add additional log and debug statements for bogus auth
+
+commit fa728d2de80001d41f539783b21977a4aa493c65
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Wed Oct 1 20:54:21 2014 -0400
+
+    Describe bogus auth header in readme
+    
+    Closes #25
+
+commit 7292bce3d890f67288464939e0ce4c775e2337fe
+Merge: 02df21c b916c72
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Thu Aug 21 22:01:02 2014 -0400
+
+    Merge pull request #24 from neirbowj/illuminated_bogus
+    
+    Hint at the origin of the bogus password
+
+commit b916c7235fa1e3db669e57c89db1baae79151574
+Author: John W. O'Brien <john@saltant.com>
+Date:   Thu Aug 21 21:29:39 2014 -0400
+
+    Hint at the origin of the bogus password
+
+commit 02df21c146858ac1a424ee525341027c18e022a6
+Merge: d9af45f d536d2e
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Tue Aug 19 21:49:10 2014 -0400
+
+    Merge branch 'gsskrb5_register_acceptor_identity'
+    
+    Closes #22
+
+commit d536d2e80ea47fe9425a7bddb67f61b63560ccde
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Mon Aug 18 20:54:18 2014 -0400
+
+    Correct all arguments and logic for keytabs
+    
+    Must have been three-quarters asleep when I wrote
+    that code.  kt_env for the env variable, kt for the
+    gsskrb5 call.
+
+commit 1ecea2aa9f2c239db94af21ecabe033125e53baa
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Tue Aug 12 22:01:31 2014 -0400
+
+    Test using gsskrb5_register_acceptor_identity
+
+commit d9af45feb24fd63c6436c3323247ed9065f84cbc
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Fri Aug 8 10:12:05 2014 -0400
+
+    Check return value of putenv
+
+commit 54398b3718241107fb57d175619e62913a6e4590
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Sat Jul 19 08:54:27 2014 -0400
+
+    Less specific versions in readme, add help section
+
+commit 2723627ed875a722a805149e4458f1f3ddbba05e
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Sat Jul 19 08:12:47 2014 -0400
+
+    update ChangeLog
+
+commit e1bd59d1308f2ecccd883758ac61bcd0ba73c854
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
 Date:   Sat Jul 19 07:57:17 2014 -0400
 
     Use strlchr and strncmp where needed
