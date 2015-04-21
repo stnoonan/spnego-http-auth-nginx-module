@@ -3,6 +3,7 @@
  * Copyright (C) 2012-2013 Sean Timothy Noonan <stnoonan@obsolescence.net>
  * Copyright (C) 2013 Marcello Barnaba <vjt@openssl.it>
  * Copyright (C) 2013 Alexander Pyhalov <alp@sfedu.ru>
+ * Copyright (C) 2014 Sven Fabricius <sven.fabricius{at}livediesel[dot]de>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -37,6 +38,7 @@
 #include <krb5.h>
 #include <com_err.h>
 
+#include "ngx_http_auth_spnego_pac.h"
 
 #define spnego_log_krb5_error(context,code) {\
     const char* ___kerror = krb5_get_error_message(context, code);\
@@ -114,6 +116,9 @@ typedef struct {
     ngx_flag_t force_realm;
     ngx_flag_t allow_basic;
     ngx_array_t *auth_princs;
+    ngx_flag_t pac;
+    ngx_str_t pac_cache_dir;
+    ngx_int_t pac_cache_time;
 } ngx_http_auth_spnego_loc_conf_t;
 
 #define SPNEGO_NGX_CONF_FLAGS NGX_HTTP_MAIN_CONF\
@@ -180,6 +185,27 @@ static ngx_command_t ngx_http_auth_spnego_commands[] = {
         offsetof(ngx_http_auth_spnego_loc_conf_t, auth_princs),
         NULL},
 
+    {ngx_string("auth_gss_pac"),
+        SPNEGO_NGX_CONF_FLAGS,
+        ngx_conf_set_flag_slot,
+        NGX_HTTP_LOC_CONF_OFFSET,
+        offsetof(ngx_http_auth_spnego_loc_conf_t, pac),
+        NULL},
+
+    {ngx_string("auth_gss_pac_cache_dir"),
+        SPNEGO_NGX_CONF_FLAGS,
+        ngx_conf_set_str_slot,
+        NGX_HTTP_LOC_CONF_OFFSET,
+        offsetof(ngx_http_auth_spnego_loc_conf_t, pac_cache_dir),
+        NULL},
+
+    {ngx_string("auth_gss_pac_cache_time"),
+        SPNEGO_NGX_CONF_FLAGS,
+        ngx_conf_set_num_slot,
+        NGX_HTTP_LOC_CONF_OFFSET,
+        offsetof(ngx_http_auth_spnego_loc_conf_t, pac_cache_time),
+        NULL},
+
     ngx_null_command
 };
 
@@ -230,7 +256,8 @@ ngx_http_auth_spnego_create_loc_conf(
     conf->force_realm = NGX_CONF_UNSET;
     conf->allow_basic = NGX_CONF_UNSET;
     conf->auth_princs = NGX_CONF_UNSET_PTR;
-
+    conf->pac = NGX_CONF_UNSET;
+    conf->pac_cache_time = NGX_CONF_UNSET;
     return conf;
 }
 
@@ -255,6 +282,11 @@ ngx_http_auth_spnego_merge_loc_conf(
     ngx_conf_merge_off_value(conf->force_realm, prev->force_realm, 0);
     ngx_conf_merge_off_value(conf->allow_basic, prev->allow_basic, 1);
     ngx_conf_merge_ptr_value(conf->auth_princs, prev->auth_princs, NGX_CONF_UNSET_PTR);
+    ngx_conf_merge_off_value(conf->pac, prev->pac, 0);
+    ngx_conf_merge_str_value(conf->pac_cache_dir, prev->pac_cache_dir, "/tmp/");
+    ngx_conf_merge_value(conf->pac_cache_time, prev->pac_cache_time, 3600);
+
+    
 
 #if (NGX_DEBUG)
     ngx_conf_log_error(NGX_LOG_INFO, cf, 0, "auth_spnego: protect = %i",
@@ -703,6 +735,43 @@ use_keytab(
     return true;
 }
 
+static ngx_int_t
+ngx_http_auth_spnego_obtain_pac(ngx_http_request_t *r, gss_ctx_id_t ctx, gss_name_t client_name, gss_buffer_desc *pac_buffer)
+{
+    OM_uint32 gss_maj, gss_min;
+
+    gss_buffer_desc pac_display_buffer = {
+        .value = NULL,
+        .length = 0
+    };
+    gss_buffer_desc pac_name = {
+        .value = (void *)((uintptr_t)("urn:mspac:")),
+        .length = sizeof("urn:mspac:")-1
+    };
+
+    int more = -1;
+    int authenticated = false;
+    int complete = false;
+
+    gss_maj = gss_get_name_attribute(&gss_min, client_name, &pac_name, &authenticated, &complete, pac_buffer, &pac_display_buffer, &more);
+    if (gss_maj != 0)
+    {
+        spnego_log_error("%s", get_gss_error(r->pool, gss_min, "obtaining PAC via GSSAPI gss_get_name_attribute failed: "));
+        return NGX_ERROR;
+    }
+    else if (authenticated && complete)
+    {
+        spnego_debug1("PAC via GSSAPI obtained: pac_buffer.length=%d", pac_buffer->length);
+        gss_maj = gss_release_buffer(&gss_min, &pac_display_buffer);
+    }
+    else
+    {
+        spnego_log_error("obtaining PAC via GSSAPI failed: authenticated: %s, complete: %s, more: %s\n", authenticated ? "true" : "false", complete ? "true" : "false", more ? "true" : "false");
+        return NGX_ERROR;
+    }
+    return NGX_OK;
+}
+
 ngx_int_t
 ngx_http_auth_spnego_auth_user_gss(
     ngx_http_request_t * r,
@@ -720,7 +789,10 @@ ngx_http_auth_spnego_auth_user_gss(
     gss_ctx_id_t gss_context = GSS_C_NO_CONTEXT;
     gss_name_t client_name = GSS_C_NO_NAME;
     gss_buffer_desc output_token = GSS_C_EMPTY_BUFFER;
-
+    gss_buffer_desc pac_buffer = GSS_C_EMPTY_BUFFER;
+    ngx_str_t pac_file;
+    char * pac_file_char;
+    
     if (NULL == ctx || ctx->token.len == 0)
         return ret;
 
@@ -810,7 +882,6 @@ ngx_http_auth_spnego_auth_user_gss(
 
     /* getting user name at the other end of the request */
     major_status = gss_display_name(&minor_status, client_name, &output_token, NULL);
-    gss_release_name(&minor_status, &client_name);
     if (GSS_ERROR(major_status)) {
         spnego_log_error("%s", get_gss_error(r->pool, minor_status,
             "gss_display_name() failed"));
@@ -847,12 +918,41 @@ ngx_http_auth_spnego_auth_user_gss(
         spnego_debug1("user is %V", &r->headers_in.user);
     }
 
+    if (alcf->pac == 1) {
+        /* try to obtain pac data from kerberos ticket */
+        if (ngx_http_auth_spnego_obtain_pac(r, gss_context, client_name, &pac_buffer) == NGX_OK) {
+        
+            pac_file.len = r->headers_in.user.len + alcf->pac_cache_dir.len + 5;
+            pac_file.data = ngx_pnalloc(r->pool, pac_file.len);
+            
+            if (NULL == pac_file.data) {
+                spnego_log_error("Failed to allocate memory");
+            } else {
+                ngx_snprintf(pac_file.data, pac_file.len, "%V%V.xml\0", &alcf->pac_cache_dir, &r->headers_in.user);
+                pac_file_char = pac_file.data;
+                pac_file_char[pac_file.len -1] = '\0';
+                spnego_debug1("PAC file id %V", &pac_file);
+                
+                /* save pac data to XML file */
+                ngx_http_auth_spnego_pac_to_file(r, &pac_buffer, (const char *) pac_file_char, alcf->pac_cache_time);
+                ngx_pfree(r->pool, pac_file.data);
+            }
+            
+            gss_release_buffer(&minor_status, &pac_buffer);
+        }
+    }
+
+    gss_release_name(&minor_status, &client_name);
+
     gss_release_buffer(&minor_status, &output_token);
 
     ret = NGX_OK;
     goto end;
 
 end:
+    if (pac_buffer.length)
+        gss_release_buffer(&minor_status, &pac_buffer);
+
     if (output_token.length)
         gss_release_buffer(&minor_status, &output_token);
 
