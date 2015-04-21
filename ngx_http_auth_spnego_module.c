@@ -286,7 +286,7 @@ ngx_http_auth_spnego_merge_loc_conf(
     ngx_conf_merge_str_value(conf->pac_cache_dir, prev->pac_cache_dir, "/tmp/");
     ngx_conf_merge_value(conf->pac_cache_time, prev->pac_cache_time, 3600);
 
-    
+
 
 #if (NGX_DEBUG)
     ngx_conf_log_error(NGX_LOG_INFO, cf, 0, "auth_spnego: protect = %i",
@@ -792,7 +792,7 @@ ngx_http_auth_spnego_auth_user_gss(
     gss_buffer_desc pac_buffer = GSS_C_EMPTY_BUFFER;
     ngx_str_t pac_file;
     char * pac_file_char;
-    
+
     if (NULL == ctx || ctx->token.len == 0)
         return ret;
 
@@ -921,23 +921,23 @@ ngx_http_auth_spnego_auth_user_gss(
     if (alcf->pac == 1) {
         /* try to obtain pac data from kerberos ticket */
         if (ngx_http_auth_spnego_obtain_pac(r, gss_context, client_name, &pac_buffer) == NGX_OK) {
-        
+
             pac_file.len = r->headers_in.user.len + alcf->pac_cache_dir.len + 5;
             pac_file.data = ngx_pnalloc(r->pool, pac_file.len);
-            
+
             if (NULL == pac_file.data) {
                 spnego_log_error("Failed to allocate memory");
             } else {
                 ngx_snprintf(pac_file.data, pac_file.len, "%V%V.xml\0", &alcf->pac_cache_dir, &r->headers_in.user);
-                pac_file_char = pac_file.data;
+                pac_file_char = (char *) pac_file.data;
                 pac_file_char[pac_file.len -1] = '\0';
                 spnego_debug1("PAC file id %V", &pac_file);
-                
+
                 /* save pac data to XML file */
                 ngx_http_auth_spnego_pac_to_file(r, &pac_buffer, (const char *) pac_file_char, alcf->pac_cache_time);
                 ngx_pfree(r->pool, pac_file.data);
             }
-            
+
             gss_release_buffer(&minor_status, &pac_buffer);
         }
     }

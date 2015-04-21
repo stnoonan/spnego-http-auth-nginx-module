@@ -371,16 +371,23 @@ void parse_user_flgs(FILE *fp, const uint32_t user_flgs)
 /* parse and output a UNISTR2 value */
 void parse_UNISTR2(FILE *fp, const unsigned char **p)
 {
-    uint32_t uni_max_len;
-    uint32_t offset;
     uint32_t uni_str_len;
-    size_t i;
 
-    uni_max_len = load_32_le(*p); *p += 4;
-    offset = load_32_le(*p); *p += 4;
+    /*
+     * uint32_t uni_max_len;
+     * uni_max_len = load_32_le(*p);
+     */
+    *p += 4;
+
+    /*
+     * uint32_t offset;
+     * offset = load_32_le(*p);
+     */
+    *p += 4;
     uni_str_len = load_32_le(*p); *p += 4;
 
-    for (i = 0; i < uni_str_len; i++)
+    size_t i = 0;
+    for (;i < uni_str_len; i++)
     {
         fprintf(fp, "%c", **p);
         *p += 2;
@@ -394,14 +401,17 @@ void parse_UNISTR2(FILE *fp, const unsigned char **p)
 /* parse and output a DOM_SID2 value */
 void parse_DOM_SID2(FILE *fp, const unsigned char **p)
 {
-    uint32_t num_auths;
     uint8_t  sid_no;
     uint8_t  num_auths2;
     uint64_t id_auth;
     uint32_t auth;
     size_t i;
 
-    num_auths = load_32_le(*p); *p += 4;
+    /*
+     * uint32_t num_auths;
+     * num_auths = load_32_le(*p);
+     */
+    *p += 4;
     sid_no = (uint8_t)(**p); *p += 1;
     num_auths2 = (uint8_t)**p; *p += 1;
     id_auth = load_48_be(*p); *p += 6;
@@ -477,30 +487,13 @@ void parse_sid_with_attribute(FILE *fp, const unsigned char **p, DOM_GID * rid)
     parse_dom_attribute(fp, rid->attr);
     fprintf(fp,"\">");
     parse_DOM_SID2(fp, p);
-    fprintf(fp,"</GroupSID>\n", rid->g_rid);
+    fprintf(fp,"</GroupSID>\n"); /*, rid->g_rid);*/
 }
 
 /* parse and output the NET_USER_INFO_3 info buffer */
 void parse_logon_info(ngx_http_request_t *r, FILE *fp, const void *ptr, PAC_INFO_BUFFER * infoBuffer)
 {
     const unsigned char *p = (const unsigned char *)ptr;
-    int64_t nt_time;
-    UNIHDR* hdr_user_name;
-    UNIHDR* hdr_full_name;
-    UNIHDR* hdr_logon_script;
-    UNIHDR* hdr_profile_path;
-    UNIHDR* hdr_home_dir;
-    UNIHDR* hdr_dir_drive;
-    UNIHDR* hdr_logon_srv;
-    UNIHDR* hdr_logon_dom;
-    uint32_t ptr_user_info;
-    uint32_t num_groups;
-    uint32_t buffer_groups;
-    uint32_t user_flgs;
-    uint8_t listFlag = 0;
-    uint32_t buffer_dom_id;
-    uint32_t num_other_sids;
-    uint32_t buffer_other_sids;
     uint32_t num_groups2;
     uint32_t num_sids;
     DOM_GID *gids;
@@ -508,45 +501,49 @@ void parse_logon_info(ngx_http_request_t *r, FILE *fp, const void *ptr, PAC_INFO
 
     p += infoBuffer->Offset;
 
-    /* Common Type Header for the Serialization Stream 
+    /* Common Type Header for the Serialization Stream
      * http://msdn.microsoft.com/en-us/library/cc243890.aspx
      */
-    
+
     if (*p != 0x01)   /* Version */
     {
         spnego_log_error("NET_USER_INFO_3 version mismatch: 0x%02x", *p);
         return;
     }
     p++;
-    
+
     if (*p != 0x10)   /* Endianness */
     {
         spnego_log_error("NET_USER_INFO_3 endianness mismatch: 0x%02x", *p);
         return;
     }
     p++;
-    
+
     if (load_16_le(p) != 0x0008)   /* CommonHeaderLength  */
     {
         spnego_log_error("NET_USER_INFO_3 common header length mismatch: 0x%04x", load_16_le(p));
         return;
     }
     p += 2;
-    
+
     if (load_32_le(p) != 0xCCCCCCCC)   /* Filler */
     {
         spnego_log_error("NET_USER_INFO_3 filler mismatch: 0x%04x", load_32_le(p));
         return;
     }
     p += 4;
-    
-    
+
+
     p += 4; /* length of the info buffer */
     p += 4; /* is zero */
 
     fprintf(fp,"<LogonInfo>\n");
 
+    /*
+    uint32_t ptr_user_info;
     ptr_user_info = load_32_le(p); p += 4;
+    */
+    p += 4;
 
     fprintf(fp,"<UserInfo3 ");
 
@@ -557,21 +554,37 @@ void parse_logon_info(ngx_http_request_t *r, FILE *fp, const void *ptr, PAC_INFO
     parse_k5_time(fp, "PasswordCanChangeTime=\"%lu\" ", &p);
     parse_k5_time(fp, "PasswordMustChangeTime=\"%lu\" ", &p);
 
-    hdr_user_name = (UNIHDR *)p; p += sizeof(UNIHDR);
-    hdr_full_name = (UNIHDR *)p; p += sizeof(UNIHDR);
-    hdr_logon_script = (UNIHDR *)p; p += sizeof(UNIHDR);
-    hdr_profile_path = (UNIHDR *)p; p += sizeof(UNIHDR);
-    hdr_home_dir = (UNIHDR *)p; p += sizeof(UNIHDR);
-    hdr_dir_drive = (UNIHDR *)p; p += sizeof(UNIHDR);
+    p += 6 * sizeof(UNIHDR);
 
+    /*
+    UNIHDR* hdr_user_name;
+    hdr_user_name = (UNIHDR *)p; p += sizeof(UNIHDR);
+    UNIHDR* hdr_full_name;
+    hdr_full_name = (UNIHDR *)p; p += sizeof(UNIHDR);
+    UNIHDR* hdr_logon_script;
+    hdr_logon_script = (UNIHDR *)p; p += sizeof(UNIHDR);
+    UNIHDR* hdr_profile_path;
+    hdr_profile_path = (UNIHDR *)p; p += sizeof(UNIHDR);
+    UNIHDR* hdr_home_dir;
+    hdr_home_dir = (UNIHDR *)p; p += sizeof(UNIHDR);
+    UNIHDR* hdr_dir_drive;
+    hdr_dir_drive = (UNIHDR *)p; p += sizeof(UNIHDR);
+    */
     parse_uint16(fp, "LogonCount=\"%u\" ", &p);
     parse_uint16(fp, "BadPasswordCount=\"%u\" ", &p);
     parse_uint32(fp, "UserRID=\"%u\" ", &p);
     parse_uint32(fp, "GroupRID=\"%u\" ", &p);
 
+    p += 2 * 4;
+    /*
+    uint32_t num_groups;
     num_groups = load_32_le(p); p += 4;
+    uint32_t buffer_groups;
     buffer_groups = load_32_le(p); p += 4;
+    */
+    uint32_t user_flgs;
     user_flgs = load_32_le(p); p += 4;
+
 
     fprintf(fp,"UserFlags=\"");
     parse_user_flgs(fp, user_flgs);
@@ -584,10 +597,20 @@ void parse_logon_info(ngx_http_request_t *r, FILE *fp, const void *ptr, PAC_INFO
     }
     fprintf(fp,"\" ");
 
+    /*
+    UNIHDR* hdr_logon_srv;
     hdr_logon_srv = (UNIHDR *)p; p += sizeof(UNIHDR);
+    UNIHDR* hdr_logon_dom;
     hdr_logon_dom = (UNIHDR *)p; p += sizeof(UNIHDR);
+    */
 
-    buffer_dom_id = load_32_le(p); p += 4;
+    p += 2 * sizeof(UNIHDR);
+
+    /*
+     * uint32_t buffer_dom_id;
+     * buffer_dom_id = load_32_le(p); p += 4;
+     */
+    p += 4;
 
     /* Padding is type of LMSessKey
      * currently I don't know for what this is.
@@ -595,28 +618,28 @@ void parse_logon_info(ngx_http_request_t *r, FILE *fp, const void *ptr, PAC_INFO
 LMSessKey: struct netr_LMSessionKey
     key                      : 0000000000000000
 acct_flags               : 0x00000014 (20)
-       0: ACB_DISABLED             
-       0: ACB_HOMDIRREQ            
-       1: ACB_PWNOTREQ             
-       0: ACB_TEMPDUP              
-       1: ACB_NORMAL               
-       0: ACB_MNS                  
-       0: ACB_DOMTRUST             
-       0: ACB_WSTRUST              
-       0: ACB_SVRTRUST             
-       0: ACB_PWNOEXP              
-       0: ACB_AUTOLOCK             
-       0: ACB_ENC_TXT_PWD_ALLOWED  
-       0: ACB_SMARTCARD_REQUIRED   
+       0: ACB_DISABLED
+       0: ACB_HOMDIRREQ
+       1: ACB_PWNOTREQ
+       0: ACB_TEMPDUP
+       1: ACB_NORMAL
+       0: ACB_MNS
+       0: ACB_DOMTRUST
+       0: ACB_WSTRUST
+       0: ACB_SVRTRUST
+       0: ACB_PWNOEXP
+       0: ACB_AUTOLOCK
+       0: ACB_ENC_TXT_PWD_ALLOWED
+       0: ACB_SMARTCARD_REQUIRED
        0: ACB_TRUSTED_FOR_DELEGATION
-       0: ACB_NOT_DELEGATED        
-       0: ACB_USE_DES_KEY_ONLY     
-       0: ACB_DONT_REQUIRE_PREAUTH 
-       0: ACB_PW_EXPIRED           
+       0: ACB_NOT_DELEGATED
+       0: ACB_USE_DES_KEY_ONLY
+       0: ACB_DONT_REQUIRE_PREAUTH
+       0: ACB_PW_EXPIRED
        0: ACB_TRUSTED_TO_AUTHENTICATE_FOR_DELEGATION
-       0: ACB_NO_AUTH_DATA_REQD    
+       0: ACB_NO_AUTH_DATA_REQD
        0: ACB_PARTIAL_SECRETS_ACCOUNT
-       0: ACB_USE_AES_KEYS         
+       0: ACB_USE_AES_KEYS
 unknown: ARRAY(7)
     unknown                  : 0x00000000 (0)
     unknown                  : 0x00000000 (0)
@@ -632,9 +655,14 @@ unknown: ARRAY(7)
         fprintf(fp,"%02X", *p++);
     }
     fprintf(fp,"\" ");
-    
+
+    /*
+    uint32_t num_other_sids;
     num_other_sids = load_32_le(p); p += 4;
+    uint32_t buffer_other_sids;
     buffer_other_sids = load_32_le(p); p += 4;
+    */
+    p += 2 * 4;
 
     /* Step Over next UNISTR2 element.
      * This element is referenced by the ptr_user_info, it should be empty.
@@ -672,23 +700,23 @@ unknown: ARRAY(7)
         parse_rid_with_attribute(fp, &gids[i]);
     }
     num_sids = load_32_le(p); p += 4;
-    
+
     gids = (DOM_GID *)p;
     p += sizeof(DOM_GID) * num_sids;
-    
+
     for (i = 0; i < num_sids; i++)
     {
         parse_sid_with_attribute(fp, &p, &gids[i]);
     }
 
     fprintf(fp, "</UserInfo3>\n");
-    
+
     /* Not implemented Resource Group, because I don't have that.
      * PSID ResourceGroupDomainSid;
      * ULONG ResourceGroupCount;
      * [size_is(ResourceGroupCount)] PGROUP_MEMBERSHIP ResourceGroupIds;
      */
-    
+
     fprintf(fp, "</LogonInfo>\n");
 }
 
@@ -716,7 +744,7 @@ void ngx_http_auth_spnego_pac_to_file(ngx_http_request_t *r, gss_buffer_desc * p
     PACTYPE *ppac_header;
     FILE *outFile;
     size_t i;
-    
+
     if(check_file(filename, cache_time))
     {
         return;
