@@ -112,6 +112,21 @@ If you are running in a different kerberos environment, you can likely run
 
     $ env KRB5_KTNAME=FILE:<path to your keytab> krb5_keytab HTTP
 
+### Increase maximum allowed header size
+
+In Active Directory environment, SPNEGO token in the Authorization header includes
+PAC (Privilege Access Certificate) information, which includes all security groups
+the user belongs to. This may cause the header to grow beyond default 8kB limit and
+causes following error message:
+
+    400 Bad Request
+    Request Header Or Cookie Too Large
+
+For performance reasons, best solution is to reduce the number of groups the user
+belongs to. When this is impractical, you may also choose to increase the allowed
+header size by explicitly setting the number and size of Nginx header buffers:
+
+    large_client_header_buffers 8 32k;
 
 Debugging
 ---------
