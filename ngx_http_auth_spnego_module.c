@@ -451,7 +451,7 @@ ngx_http_auth_spnego_basic(
 {
     ngx_str_t host_name;
     ngx_str_t service;
-    ngx_str_t user;
+    ngx_str_t user, new_user;
     int len;
 
     ngx_int_t ret = NGX_DECLINED;
@@ -465,7 +465,6 @@ ngx_http_auth_spnego_basic(
     int kret = 0;
     char *name = NULL;
     char *p = NULL;
-    u_char *new_user=NULL;
 
     code = krb5_init_context(&kcontext);
     if (code) {
@@ -516,56 +515,91 @@ ngx_http_auth_spnego_basic(
     p = ngx_strchr(r->headers_in.user.data, '@');
     user.len = r->headers_in.user.len + 1;
     if (NULL == p) {
-        user.len += alcf->realm.len + 1;
-        user.data = ngx_palloc(r->pool, user.len);
-        ngx_snprintf(user.data, user.len, "%V@%V%Z", &r->headers_in.user,
-                &alcf->realm);
-        if (alcf->force_realm && alcf->realm.data){
-            len = user.len + 1;
-            new_user = ngx_pcalloc(r->pool, len);
-            if (NULL == new_user) {
+        if (alcf->force_realm && alcf->realm.len && alcf->realm.data ) {
+            user.len += alcf->realm.len + 1; /* +1 for @ */
+            user.data = ngx_palloc(r->pool, user.len);
+            if (NULL == user.data) {
                 spnego_log_error("Not enough memory");
                 spnego_error(NGX_ERROR);
             }
-            ngx_snprintf(new_user, user.len, "%s", user.data);
-            new_user[len-1] = '\0';
-            r->headers_in.user.len = len;
-            ngx_pfree(r->pool, r->headers_in.user.data);
-            r->headers_in.user.data = new_user;
-            spnego_debug1("set user to %s", new_user);
-            if (ngx_http_auth_spnego_set_bogus_authorization(r) != NGX_OK) {
-                spnego_log_error("Failed to set remote_user");
+            ngx_snprintf(user.data, user.len, "%V@%V%Z", &r->headers_in.user,
+                &alcf->realm);
+        } else {
+            user.data = ngx_palloc(r->pool, user.len);
+            if (NULL == user.data) {
+                spnego_log_error("Not enough memory");
+                spnego_error(NGX_ERROR);
             }
+            ngx_snprintf(user.data, user.len, "%V%Z", &r->headers_in.user);
         }
     } else {
-        user.data = ngx_palloc(r->pool, user.len);
-        ngx_snprintf(user.data, user.len, "%V%Z", &r->headers_in.user);
-        if(alcf->force_realm && alcf->realm.data){
-            p = ngx_strchr(user.data,'@');
-            if (ngx_strncmp(p + 1, alcf->realm.data, alcf->realm.len) != 0) {
-                *p = '\0';
-                len = user.len + 2 + alcf->realm.len;
-                new_user = ngx_pcalloc(r->pool, len);
-                if (NULL == new_user) {
+        if (alcf->realm.len && alcf->realm.data && ngx_strncmp(p + 1,
+	    alcf->realm.data, alcf->realm.len) == 0) {
+            user.data = ngx_palloc(r->pool, user.len);
+            if (NULL == user.data) {
+                spnego_log_error("Not enough memory");
+                spnego_error(NGX_ERROR);
+            }
+            ngx_snprintf(user.data, user.len, "%V%Z",
+                &r->headers_in.user);
+            if (alcf->fqun == 0) {
+                /*
+                 * Specified realm is identical to configured realm.
+                 * Truncate $remote_user to strip @REALM.
+                 */
+                r->headers_in.user.len -= alcf->realm.len + 1;
+            }
+	} else if (alcf->force_realm) {
+            *p = '\0';
+            user.len = ngx_strlen(r->headers_in.user.data) + 1;
+	    if (alcf->realm.len && alcf->realm.data)
+		user.len += alcf->realm.len + 1;
+            user.data = ngx_pcalloc(r->pool, user.len);
+            if (NULL == user.data) {
+                spnego_log_error("Not enough memory");
+                spnego_error(NGX_ERROR);
+            }
+	    if (alcf->realm.len && alcf->realm.data)
+		ngx_snprintf(user.data, user.len, "%s@%V%Z",
+                    r->headers_in.user.data, &alcf->realm);
+	    else
+		ngx_snprintf(user.data, user.len, "%s%Z",
+                    r->headers_in.user.data);
+            /*
+             * Rewrite $remote_user with the forced realm.
+             * If the forced realm is shorter than the
+             * specified realm, we can reuse the original
+             * buffer.
+             */
+            if (r->headers_in.user.len >= user.len - 1)
+                r->headers_in.user.len = user.len - 1;
+            else {
+                new_user.len = user.len - 1;
+                new_user.data = ngx_palloc(r->pool, new_user.len);
+                if (NULL == new_user.data) {
                     spnego_log_error("Not enough memory");
                     spnego_error(NGX_ERROR);
                 }
-                ngx_snprintf(new_user, len, "%s@%s%Z",user.data,alcf->realm.data);
-                new_user[len-1] = '\0';
-                r->headers_in.user.len = len;
                 ngx_pfree(r->pool, r->headers_in.user.data);
-                r->headers_in.user.data = new_user;
-                spnego_debug2("set user to %s, realm %s included", new_user, alcf->realm.data);
-                if (ngx_http_auth_spnego_set_bogus_authorization(r) != NGX_OK) {
-                    spnego_log_error("Failed to set remote_user");
-                }
-                spnego_debug1("after bogus authorization user.data is %s", (const char *) user.data);
+                r->headers_in.user.data = new_user.data;
+                r->headers_in.user.len = new_user.len;
             }
+            ngx_memcpy(r->headers_in.user.data, user.data,
+		r->headers_in.user.len);
+        } else {
+            user.data = ngx_palloc(r->pool, user.len);
+            if (NULL == user.data) {
+                spnego_log_error("Not enough memory");
+                spnego_error(NGX_ERROR);
+            }
+            ngx_snprintf(user.data, user.len, "%V%Z", &r->headers_in.user);
         }
     }
-    spnego_debug1("before krb5_parse_name user.data is %s", (const char *) user.data);
-    code = krb5_parse_name(kcontext, (const char *) user.data, &client);
 
+    spnego_debug1("Attempting authentication with principal %s",
+	(const char *)user.data);
+
+    code = krb5_parse_name(kcontext, (const char *) user.data, &client);
     if (code) {
         spnego_log_error("Kerberos error: Unable to parse username");
         spnego_debug1("username is %s.", (const char *) user.data);
@@ -596,6 +630,29 @@ ngx_http_auth_spnego_basic(
         spnego_log_krb5_error(kcontext, code);
         spnego_error(NGX_DECLINED);
     }
+
+    /* Try to add the system realm to $remote_user if needed. */
+    if (alcf->fqun && !ngx_strchr(r->headers_in.user.data, '@')) {
+	const char *realm = krb5_principal_get_realm(kcontext, client);
+	if (realm) {
+	    new_user.len = r->headers_in.user.len + 1 + ngx_strlen(realm);
+	    new_user.data = ngx_palloc(r->pool, new_user.len);
+	    if (NULL == new_user.data) {
+		spnego_log_error("Not enough memory");
+		spnego_error(NGX_ERROR);
+	    }
+	    ngx_snprintf(new_user.data, new_user.len, "%V@%s",
+		&r->headers_in.user, realm);
+	    ngx_pfree(r->pool, r->headers_in.user.data);
+	    r->headers_in.user.data = new_user.data;
+	    r->headers_in.user.len = new_user.len;
+	}
+    }
+
+    spnego_debug1("Setting $remote_user to %V", &r->headers_in.user);
+    if (ngx_http_auth_spnego_set_bogus_authorization(r) != NGX_OK)
+        spnego_log_error("Failed to set $remote_user");
+
     spnego_debug0("ngx_http_auth_spnego_basic: returning NGX_OK");
 
     ret = NGX_OK;
@@ -607,6 +664,10 @@ end:
         krb5_free_principal(kcontext, client);
     if (server)
         krb5_free_principal(kcontext, server);
+    if (service.data)
+        ngx_pfree(r->pool, service.data);
+    if (user.data)
+        ngx_pfree(r->pool, user.data);
 
     krb5_get_init_creds_opt_free(kcontext, gic_options);
 
