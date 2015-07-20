@@ -5,6 +5,10 @@ This module implements adds [SPNEGO](http://tools.ietf.org/html/rfc4178)
 support to nginx(http://nginx.org).  It currently supports only Kerberos
 authentication via [GSSAPI](http://en.wikipedia.org/wiki/GSSAPI)
 
+Purpose of this fork
+--------------------
+
+This fork is abandoned. Please use the original source: http://github.com/stnoonan/spnego-http-auth-nginx-module
 
 Prerequisites
 -------------
