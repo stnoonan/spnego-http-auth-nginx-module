@@ -65,11 +65,11 @@ static ngx_int_t ngx_http_auth_spnego_init(ngx_conf_t *);
 ngx_int_t
 ngx_http_auth_spnego_set_bogus_authorization(ngx_http_request_t * r);
 
-const char *
+    const char *
 get_gss_error(
-    ngx_pool_t * p,
-    OM_uint32 error_status,
-    char *prefix)
+        ngx_pool_t * p,
+        OM_uint32 error_status,
+        char *prefix)
 {
     OM_uint32 maj_stat, min_stat;
     OM_uint32 msg_ctx = 0;
@@ -118,9 +118,9 @@ typedef struct {
 
 #define SPNEGO_NGX_CONF_FLAGS NGX_HTTP_MAIN_CONF\
     | NGX_HTTP_SRV_CONF\
-    | NGX_HTTP_LOC_CONF\
-    | NGX_HTTP_LMT_CONF\
-    | NGX_CONF_FLAG
+| NGX_HTTP_LOC_CONF\
+| NGX_HTTP_LMT_CONF\
+| NGX_CONF_FLAG
 
 /* Module Directives */
 static ngx_command_t ngx_http_auth_spnego_commands[] = {
@@ -214,9 +214,9 @@ ngx_module_t ngx_http_auth_spnego_module = {
     /* uintptr_t spare_hook{0-7}; */
 };
 
-static void *
+    static void *
 ngx_http_auth_spnego_create_loc_conf(
-    ngx_conf_t * cf)
+        ngx_conf_t * cf)
 {
     ngx_http_auth_spnego_loc_conf_t *conf;
 
@@ -234,11 +234,11 @@ ngx_http_auth_spnego_create_loc_conf(
     return conf;
 }
 
-static char *
+    static char *
 ngx_http_auth_spnego_merge_loc_conf(
-    ngx_conf_t * cf,
-    void *parent,
-    void *child)
+        ngx_conf_t * cf,
+        void *parent,
+        void *child)
 {
     ngx_http_auth_spnego_loc_conf_t *prev = parent;
     ngx_http_auth_spnego_loc_conf_t *conf = child;
@@ -278,7 +278,7 @@ ngx_http_auth_spnego_merge_loc_conf(
         ngx_str_t *auth_princs = conf->auth_princs->elts;
         for (; ii < conf->auth_princs->nelts; ++ii) {
             ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0,
-                "auth_spnego: auth_princs = %.*s", auth_princs[ii].len, auth_princs[ii].data);
+                    "auth_spnego: auth_princs = %.*s", auth_princs[ii].len, auth_princs[ii].data);
         }
     }
 #endif
@@ -286,9 +286,9 @@ ngx_http_auth_spnego_merge_loc_conf(
     return NGX_CONF_OK;
 }
 
-static ngx_int_t
+    static ngx_int_t
 ngx_http_auth_spnego_init(
-    ngx_conf_t * cf)
+        ngx_conf_t * cf)
 {
     ngx_http_handler_pt *h;
     ngx_http_core_main_conf_t *cmcf;
@@ -336,12 +336,12 @@ ngx_http_auth_spnego_headers_basic_only(
     return NGX_OK;
 }
 
-static ngx_int_t
+    static ngx_int_t
 ngx_http_auth_spnego_headers(
-    ngx_http_request_t *r,
-    ngx_http_auth_spnego_ctx_t *ctx,
-    ngx_str_t *token,
-    ngx_http_auth_spnego_loc_conf_t *alcf)
+        ngx_http_request_t *r,
+        ngx_http_auth_spnego_ctx_t *ctx,
+        ngx_str_t *token,
+        ngx_http_auth_spnego_loc_conf_t *alcf)
 {
     ngx_str_t value = ngx_null_string;
     /* only use token if authorized as there appears to be a bug in
@@ -397,11 +397,11 @@ ngx_http_auth_spnego_headers(
     return NGX_OK;
 }
 
-static bool
+    static bool
 ngx_spnego_authorized_principal(
-    ngx_http_request_t * r,
-    ngx_str_t *princ,
-    ngx_http_auth_spnego_loc_conf_t *alcf)
+        ngx_http_request_t * r,
+        ngx_str_t *princ,
+        ngx_http_auth_spnego_loc_conf_t *alcf)
 {
     if (NGX_CONF_UNSET_PTR == alcf->auth_princs) {
         return true;
@@ -421,10 +421,10 @@ ngx_spnego_authorized_principal(
     return false;
 }
 
-ngx_int_t
+    ngx_int_t
 ngx_http_auth_spnego_token(
-    ngx_http_request_t *r,
-    ngx_http_auth_spnego_ctx_t *ctx)
+        ngx_http_request_t *r,
+        ngx_http_auth_spnego_ctx_t *ctx)
 {
     ngx_str_t token;
     ngx_str_t decoded;
@@ -443,7 +443,7 @@ ngx_http_auth_spnego_token(
     if (token.len < nego_sz ||
             ngx_strncasecmp(token.data, (u_char *) "Negotiate ", nego_sz) != 0) {
         if (ngx_strncasecmp(
-                token.data, (u_char *) "NTLM", sizeof("NTLM")) == 0) {
+                    token.data, (u_char *) "NTLM", sizeof("NTLM")) == 0) {
             spnego_log_error("Detected unsupported mechanism: NTLM");
         }
         return NGX_DECLINED;
@@ -478,17 +478,17 @@ ngx_http_auth_spnego_token(
     return NGX_OK;
 }
 
-ngx_int_t
+    ngx_int_t
 ngx_http_auth_spnego_basic(
-    ngx_http_request_t * r,
-    ngx_http_auth_spnego_ctx_t * ctx,
-    ngx_http_auth_spnego_loc_conf_t * alcf)
+        ngx_http_request_t * r,
+        ngx_http_auth_spnego_ctx_t * ctx,
+        ngx_http_auth_spnego_loc_conf_t * alcf)
 {
     ngx_str_t host_name;
     ngx_str_t service;
     ngx_str_t user;
-    int len;
-
+    user.data = NULL;
+    ngx_str_t new_user;
     ngx_int_t ret = NGX_DECLINED;
 
     krb5_context kcontext = NULL;
@@ -500,7 +500,6 @@ ngx_http_auth_spnego_basic(
     int kret = 0;
     char *name = NULL;
     char *p = NULL;
-    u_char *new_user=NULL;
 
     code = krb5_init_context(&kcontext);
     if (code) {
@@ -551,56 +550,91 @@ ngx_http_auth_spnego_basic(
     p = ngx_strchr(r->headers_in.user.data, '@');
     user.len = r->headers_in.user.len + 1;
     if (NULL == p) {
-        user.len += alcf->realm.len + 1;
-        user.data = ngx_palloc(r->pool, user.len);
-        ngx_snprintf(user.data, user.len, "%V@%V%Z", &r->headers_in.user,
-                &alcf->realm);
-        if (alcf->force_realm && alcf->realm.data){
-            len = user.len + 1;
-            new_user = ngx_pcalloc(r->pool, len);
-            if (NULL == new_user) {
+        if (alcf->force_realm && alcf->realm.len && alcf->realm.data ) {
+            user.len += alcf->realm.len + 1; /* +1 for @ */
+            user.data = ngx_palloc(r->pool, user.len);
+            if (NULL == user.data) {
                 spnego_log_error("Not enough memory");
                 spnego_error(NGX_ERROR);
             }
-            ngx_snprintf(new_user, user.len, "%s", user.data);
-            new_user[len-1] = '\0';
-            r->headers_in.user.len = len;
-            ngx_pfree(r->pool, r->headers_in.user.data);
-            r->headers_in.user.data = new_user;
-            spnego_debug1("set user to %s", new_user);
-            if (ngx_http_auth_spnego_set_bogus_authorization(r) != NGX_OK) {
-                spnego_log_error("Failed to set remote_user");
+            ngx_snprintf(user.data, user.len, "%V@%V%Z", &r->headers_in.user,
+                    &alcf->realm);
+        } else {
+            user.data = ngx_palloc(r->pool, user.len);
+            if (NULL == user.data) {
+                spnego_log_error("Not enough memory");
+                spnego_error(NGX_ERROR);
             }
+            ngx_snprintf(user.data, user.len, "%V%Z", &r->headers_in.user);
         }
     } else {
-        user.data = ngx_palloc(r->pool, user.len);
-        ngx_snprintf(user.data, user.len, "%V%Z", &r->headers_in.user);
-        if(alcf->force_realm && alcf->realm.data){
-            p = ngx_strchr(user.data,'@');
-            if (ngx_strncmp(p + 1, alcf->realm.data, alcf->realm.len) != 0) {
-                *p = '\0';
-                len = user.len + 2 + alcf->realm.len;
-                new_user = ngx_pcalloc(r->pool, len);
-                if (NULL == new_user) {
+        if (alcf->realm.len && alcf->realm.data && ngx_strncmp(p + 1,
+                    alcf->realm.data, alcf->realm.len) == 0) {
+            user.data = ngx_palloc(r->pool, user.len);
+            if (NULL == user.data) {
+                spnego_log_error("Not enough memory");
+                spnego_error(NGX_ERROR);
+            }
+            ngx_snprintf(user.data, user.len, "%V%Z",
+                    &r->headers_in.user);
+            if (alcf->fqun == 0) {
+                /*
+                 * Specified realm is identical to configured realm.
+                 * Truncate $remote_user to strip @REALM.
+                 */
+                r->headers_in.user.len -= alcf->realm.len + 1;
+            }
+        } else if (alcf->force_realm) {
+            *p = '\0';
+            user.len = ngx_strlen(r->headers_in.user.data) + 1;
+            if (alcf->realm.len && alcf->realm.data)
+                user.len += alcf->realm.len + 1;
+            user.data = ngx_pcalloc(r->pool, user.len);
+            if (NULL == user.data) {
+                spnego_log_error("Not enough memory");
+                spnego_error(NGX_ERROR);
+            }
+            if (alcf->realm.len && alcf->realm.data)
+                ngx_snprintf(user.data, user.len, "%s@%V%Z",
+                        r->headers_in.user.data, &alcf->realm);
+            else
+                ngx_snprintf(user.data, user.len, "%s%Z",
+                        r->headers_in.user.data);
+            /*
+             * Rewrite $remote_user with the forced realm.
+             * If the forced realm is shorter than the
+             * specified realm, we can reuse the original
+             * buffer.
+             */
+            if (r->headers_in.user.len >= user.len - 1)
+                r->headers_in.user.len = user.len - 1;
+            else {
+                new_user.len = user.len - 1;
+                new_user.data = ngx_palloc(r->pool, new_user.len);
+                if (NULL == new_user.data) {
                     spnego_log_error("Not enough memory");
                     spnego_error(NGX_ERROR);
                 }
-                ngx_snprintf(new_user, len, "%s@%s%Z",user.data,alcf->realm.data);
-                new_user[len-1] = '\0';
-                r->headers_in.user.len = len;
                 ngx_pfree(r->pool, r->headers_in.user.data);
-                r->headers_in.user.data = new_user;
-                spnego_debug2("set user to %s, realm %s included", new_user, alcf->realm.data);
-                if (ngx_http_auth_spnego_set_bogus_authorization(r) != NGX_OK) {
-                    spnego_log_error("Failed to set remote_user");
-                }
-                spnego_debug1("after bogus authorization user.data is %s", (const char *) user.data);
+                r->headers_in.user.data = new_user.data;
+                r->headers_in.user.len = new_user.len;
             }
+            ngx_memcpy(r->headers_in.user.data, user.data,
+                    r->headers_in.user.len);
+        } else {
+            user.data = ngx_palloc(r->pool, user.len);
+            if (NULL == user.data) {
+                spnego_log_error("Not enough memory");
+                spnego_error(NGX_ERROR);
+            }
+            ngx_snprintf(user.data, user.len, "%V%Z", &r->headers_in.user);
         }
     }
-    spnego_debug1("before krb5_parse_name user.data is %s", (const char *) user.data);
-    code = krb5_parse_name(kcontext, (const char *) user.data, &client);
 
+    spnego_debug1("Attempting authentication with principal %s",
+            (const char *)user.data);
+
+    code = krb5_parse_name(kcontext, (const char *) user.data, &client);
     if (code) {
         spnego_log_error("Kerberos error: Unable to parse username");
         spnego_debug1("username is %s.", (const char *) user.data);
@@ -619,8 +653,7 @@ ngx_http_auth_spnego_basic(
 
     krb5_get_init_creds_opt_alloc(kcontext, &gic_options);
 
-    code =
-        krb5_get_init_creds_password(kcontext, &creds, client,
+    code = krb5_get_init_creds_password(kcontext, &creds, client,
                 (char *) r->headers_in.passwd.data,
                 NULL, NULL, 0, NULL, gic_options);
 
@@ -631,6 +664,38 @@ ngx_http_auth_spnego_basic(
         spnego_log_krb5_error(kcontext, code);
         spnego_error(NGX_DECLINED);
     }
+
+    /* Try to add the system realm to $remote_user if needed. */
+    if (alcf->fqun && !ngx_strchr(r->headers_in.user.data, '@')) {
+#ifdef krb5_princ_realm
+        /*
+         * MIT does not have krb5_principal_get_realm() but its
+         * krb5_princ_realm() is a macro that effectively points
+         * to a char *.
+         */
+        const char *realm = krb5_princ_realm(kcontext, client)->data;
+#else
+        const char *realm = krb5_principal_get_realm(kcontext, client);
+#endif
+        if (realm) {
+            new_user.len = r->headers_in.user.len + 1 + ngx_strlen(realm);
+            new_user.data = ngx_palloc(r->pool, new_user.len);
+            if (NULL == new_user.data) {
+                spnego_log_error("Not enough memory");
+                spnego_error(NGX_ERROR);
+            }
+            ngx_snprintf(new_user.data, new_user.len, "%V@%s",
+                    &r->headers_in.user, realm);
+            ngx_pfree(r->pool, r->headers_in.user.data);
+            r->headers_in.user.data = new_user.data;
+            r->headers_in.user.len = new_user.len;
+        }
+    }
+
+    spnego_debug1("Setting $remote_user to %V", &r->headers_in.user);
+    if (ngx_http_auth_spnego_set_bogus_authorization(r) != NGX_OK)
+        spnego_log_error("Failed to set $remote_user");
+
     spnego_debug0("ngx_http_auth_spnego_basic: returning NGX_OK");
 
     ret = NGX_OK;
@@ -642,6 +707,10 @@ end:
         krb5_free_principal(kcontext, client);
     if (server)
         krb5_free_principal(kcontext, server);
+    if (service.data)
+        ngx_pfree(r->pool, service.data);
+    if (user.data)
+        ngx_pfree(r->pool, user.data);
 
     krb5_get_init_creds_opt_free(kcontext, gic_options);
 
@@ -657,9 +726,9 @@ end:
  * non-Negotiate authorization header. This may possibly clobber Negotiate
  * token too soon.
  */
-ngx_int_t
+    ngx_int_t
 ngx_http_auth_spnego_set_bogus_authorization(
-    ngx_http_request_t *r)
+        ngx_http_request_t *r)
 {
     const char *bogus_passwd = "bogus_auth_gss_passwd";
     ngx_str_t plain, encoded, final;
@@ -703,10 +772,10 @@ ngx_http_auth_spnego_set_bogus_authorization(
     return NGX_OK;
 }
 
-static bool
+    static bool
 use_keytab(
-    ngx_http_request_t * r,
-    ngx_str_t *keytab)
+        ngx_http_request_t * r,
+        ngx_str_t *keytab)
 {
     size_t kt_env_sz = sizeof("KRB5_KTNAME=") + keytab->len;
     char *kt_env = (char *) ngx_pcalloc(r->pool, kt_env_sz + 1);
@@ -738,11 +807,11 @@ use_keytab(
     return true;
 }
 
-ngx_int_t
+    ngx_int_t
 ngx_http_auth_spnego_auth_user_gss(
-    ngx_http_request_t * r,
-    ngx_http_auth_spnego_ctx_t * ctx,
-    ngx_http_auth_spnego_loc_conf_t * alcf)
+        ngx_http_request_t * r,
+        ngx_http_auth_spnego_ctx_t * ctx,
+        ngx_http_auth_spnego_loc_conf_t * alcf)
 {
     ngx_int_t ret = NGX_DECLINED;
     u_char *pu;
@@ -819,7 +888,7 @@ ngx_http_auth_spnego_auth_user_gss(
             NULL, &output_token, NULL, NULL, NULL);
     if (GSS_ERROR(major_status)) {
         spnego_debug1("%s", get_gss_error(
-            r->pool, minor_status, "gss_accept_sec_context() failed"));
+                    r->pool, minor_status, "gss_accept_sec_context() failed"));
         spnego_error(NGX_DECLINED);
     }
 
@@ -848,7 +917,7 @@ ngx_http_auth_spnego_auth_user_gss(
     gss_release_name(&minor_status, &client_name);
     if (GSS_ERROR(major_status)) {
         spnego_log_error("%s", get_gss_error(r->pool, minor_status,
-            "gss_display_name() failed"));
+                    "gss_display_name() failed"));
         spnego_error(NGX_ERROR);
     }
 
@@ -868,7 +937,7 @@ ngx_http_auth_spnego_auth_user_gss(
         r->headers_in.user.len = user.len;
         if (alcf->fqun == 0) {
             pu = ngx_strlchr(r->headers_in.user.data,
-                r->headers_in.user.data + r->headers_in.user.len, '@');
+                    r->headers_in.user.data + r->headers_in.user.len, '@');
             if (pu != NULL && ngx_strncmp(pu + 1, alcf->realm.data, alcf->realm.len) == 0) {
                 *pu = '\0';
                 r->headers_in.user.len = ngx_strlen(r->headers_in.user.data);
@@ -907,9 +976,9 @@ end:
     return ret;
 }
 
-static ngx_int_t
+    static ngx_int_t
 ngx_http_auth_spnego_handler(
-    ngx_http_request_t * r)
+        ngx_http_request_t * r)
 {
     ngx_int_t ret = NGX_DECLINED;
     ngx_http_auth_spnego_ctx_t *ctx;
