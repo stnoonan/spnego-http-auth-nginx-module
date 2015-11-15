@@ -1,3 +1,117 @@
+Merge: d3b74ba c85a38c
+Author: Andreas Roth <aroth@arsoft-online.com>
+Date:   Wed Jul 22 06:34:14 2015 +0200
+
+    Merge remote-tracking branch 'stnoonan/master'
+    
+    Conflicts:
+    	ngx_http_auth_spnego_module.c
+
+commit c85a38c595c6f45609f9984c3254a33996ed587d
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Mon Jul 20 08:21:32 2015 -0400
+
+    Indentation and compile fixups after last merged pull requests
+    
+    Closes #52
+
+commit f76d5d91066451302dbb2b47252515c261ed7abf
+Merge: e6eb235 48f2f02
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Thu Jul 9 07:22:41 2015 -0400
+
+    Merge pull request #50 from ppaeps/master
+
+commit 48f2f022661422ccf58573fd0d31a8f810a9a8b9
+Author: Philip Paeps <philip@trouble.is>
+Date:   Thu Jul 9 12:56:07 2015 +0200
+
+    Fix build for MIT Kerberos
+    
+    krb5_principal_get_realm() only exists in Heimdal.
+    Use krb5_princ_realm() on MIT.
+    
+    Tested with Heimdal 1.5 and MIT 1.13.
+
+commit e6eb235b37c656fa87a5bd1d7ada4ddfc426f291
+Merge: 29cb489 df5d674
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Wed Jul 8 21:27:20 2015 -0400
+
+    Merge pull request #49 from ppaeps/basic_auth_fixes
+
+commit df5d674a9f9b92c0eb79d5df5e52f084c1a5c1b3
+Author: Philip Paeps <philip@trouble.is>
+Date:   Sat Jul 4 14:35:05 2015 +0200
+
+    Improve basic authentication and clarify semantics
+    
+    Fixes a number of shortcomings in the fallback basic authentication
+    code and documentation:
+    
+      o Document the behaviour of auth_gss_force_realm
+      o Make auth_gss_format_full behave consistently
+      o Never copy a trailing \0 into $remote_user
+      o Plug two small memory leaks
+    
+    Arguably, basic authentication should return NGX_DECLINED when
+    auth_gss_force_realm is configured and a different realm is given,
+    but preserve the original behaviour in case anyone relies on that.
+
+commit 29cb48979593c06dffe455ab332ff42570b77150
+Merge: 9134559 bfb44a0
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Tue Apr 21 08:01:02 2015 -0400
+
+    Merge pull request #40 from oranki/master
+    
+    Add troubleshooting section for header size problems
+
+commit bfb44a0293f7fb9fcf12670b04f3e1a2f6f202c6
+Author: Atte Peltomaki <apeltomaki@nvidia.com>
+Date:   Tue Apr 21 14:50:14 2015 +0300
+
+    Add troubleshooting section for header size problems
+    
+    A common problem in large Active Directory environments.
+
+commit d3b74ba94b43a474fffe487a89e5148905f99ac3
+Merge: 3ddf4da 9134559
+Author: Andreas Roth <aroth@arsoft-online.com>
+Date:   Fri Apr 3 11:10:44 2015 +0200
+
+    Merge remote-tracking branch 'stnoonan/master'
+
+commit 9134559f8fd07ef549c70b9b1e4474b6d9037db4
+Merge: fbcb2a9 b691aab
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Wed Mar 25 06:37:25 2015 -0400
+
+    Merge pull request #36 from tkdchen/handle-missed-ngx_error
+    
+    add missed handle on NGX_ERROR
+
+commit b691aab35e45b93bbfb4ca9e514967203395e163
+Author: Chenxiong Qi <qcxhome@gmail.com>
+Date:   Wed Mar 25 14:46:59 2015 +0800
+
+    add missed handle on NGX_ERROR
+    
+    NGX_ERROR would be raised when some Kerberos function fails, then module will
+    report the authentication still succeeds.
+    
+    This patch treats such errors as an internal error. That is, once NGX_ERROR is
+    returned from function ngx_http_auth_spnego_auth_user_gss, module will
+    terminate the authentication process immediately and mark it
+    NGX_HTTP_INTERNAL_SERVER_ERROR.
+
+commit fbcb2a9465b1422c654fb5cb361c084253668e2e
+Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
+Date:   Mon Mar 16 15:23:54 2015 -0400
+
+    Update ChangeLog
+
+commit 85aa8550324f7c2480a15379c46cc8175ac820d9
 Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
 Date:   Mon Mar 16 15:23:37 2015 -0400
 
@@ -5,6 +119,12 @@ Date:   Mon Mar 16 15:23:37 2015 -0400
     
     This fixes the inability of this module to compile
     on FreeBSD 10.1
+
+commit 3ddf4da8edbfae49f0b7b55fa9f9d12d6ad56954
+Author: Andreas Roth <aroth@arsoft-online.com>
+Date:   Wed Nov 12 07:01:03 2014 +0100
+
+    implement fallback to basic authentication when GSSAPI/Negotiate fails
 
 commit e59a22d3cf78fe756d7b381ad0b88dfd7fa9aad6
 Author: Sean Timothy Noonan <stnoonan@obsolescence.net>
