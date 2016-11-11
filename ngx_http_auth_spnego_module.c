@@ -1028,7 +1028,7 @@ ngx_http_auth_spnego_handler(
              * not fall through to real SPNEGO */
             if (NGX_DECLINED == ngx_http_auth_spnego_basic(r, ctx, alcf)) {
                 spnego_debug0("Basic auth failed");
-                return (ctx->ret = NGX_HTTP_FORBIDDEN);
+                return (ctx->ret = NGX_HTTP_UNAUTHORIZED);
             }
 
             if (!ngx_spnego_authorized_principal(r, &r->headers_in.user, alcf)) {
