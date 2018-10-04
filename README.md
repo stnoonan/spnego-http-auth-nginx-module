@@ -91,6 +91,12 @@ These options affect the operation of basic authentication:
   *auth_gss_format_full* is not set, $remote_user will not include a realm even
   if one was specified by the client.
 
+Allow unauthorized users
+-------------------------
+
+If you want to allow unauthorized users, you can use flag:
+
+    auth_gss_allow_unauthorized on (default is off)
 
 Troubleshooting
 ---------------

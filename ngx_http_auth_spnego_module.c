@@ -113,6 +113,7 @@ typedef struct {
     ngx_flag_t fqun;
     ngx_flag_t force_realm;
     ngx_flag_t allow_basic;
+    ngx_flag_t allow_unauthorized;
     ngx_array_t *auth_princs;
 } ngx_http_auth_spnego_loc_conf_t;
 
@@ -171,6 +172,13 @@ static ngx_command_t ngx_http_auth_spnego_commands[] = {
         ngx_conf_set_flag_slot,
         NGX_HTTP_LOC_CONF_OFFSET,
         offsetof(ngx_http_auth_spnego_loc_conf_t, allow_basic),
+        NULL},
+    
+    {ngx_string("auth_gss_allow_unauthorized"),
+        SPNEGO_NGX_CONF_FLAGS,
+        ngx_conf_set_flag_slot,
+        NGX_HTTP_LOC_CONF_OFFSET,
+        offsetof(ngx_http_auth_spnego_loc_conf_t, allow_unauthorized),
         NULL},
 
     {ngx_string("auth_gss_authorized_principal"),
@@ -254,6 +262,7 @@ ngx_http_auth_spnego_merge_loc_conf(
     ngx_conf_merge_off_value(conf->fqun, prev->fqun, 0);
     ngx_conf_merge_off_value(conf->force_realm, prev->force_realm, 0);
     ngx_conf_merge_off_value(conf->allow_basic, prev->allow_basic, 1);
+    ngx_conf_merge_off_value(conf->allow_unauthorized, prev->allow_unauthorized, 0);
     ngx_conf_merge_ptr_value(conf->auth_princs, prev->auth_princs, NGX_CONF_UNSET_PTR);
 
 #if (NGX_DEBUG)
@@ -995,13 +1004,23 @@ ngx_http_auth_spnego_handler(
              * attempt basic auth.  If we attempt basic auth, we do
              * not fall through to real SPNEGO */
             if (NGX_DECLINED == ngx_http_auth_spnego_basic(r, ctx, alcf)) {
-                spnego_debug0("Basic auth failed");
-                return (ctx->ret = NGX_HTTP_UNAUTHORIZED);
+                if (alcf->allow_unauthorized) {
+                    spnego_debug0("Basic auth failed, but user allowed");
+                    return (ctx->ret = NGX_OK);
+                } else {
+                    spnego_debug0("Basic auth failed");
+                    return (ctx->ret = NGX_HTTP_UNAUTHORIZED);
+                }
             }
 
             if (!ngx_spnego_authorized_principal(r, &r->headers_in.user, alcf)) {
-                spnego_debug0("User not authorized");
-                return (ctx->ret = NGX_HTTP_FORBIDDEN);
+                if (alcf->allow_unauthorized) {
+                    spnego_debug0("User not authorized, but allowed");
+                    return (ctx->ret = NGX_OK);
+                } else {
+                    spnego_debug0("User not authorized");
+                    return (ctx->ret = NGX_HTTP_FORBIDDEN);
+                }
             }
 
             spnego_debug0("Basic auth succeeded");
@@ -1023,13 +1042,23 @@ ngx_http_auth_spnego_handler(
          * but doesn't support GSSAPI. We could attempt to fall
          * back to basic here... */
         if (NGX_DECLINED == ret) {
-            spnego_debug0("GSSAPI failed");
-            return (ctx->ret = NGX_HTTP_FORBIDDEN);
+            if (alcf->allow_unauthorized) {
+                spnego_debug0("GSSAPI failed, but user allowed");
+                return (ctx->ret = NGX_OK);
+            } else {
+                spnego_debug0("GSSAPI failed");
+                return (ctx->ret = NGX_HTTP_FORBIDDEN);
+            }
         }
 
         if (!ngx_spnego_authorized_principal(r, &r->headers_in.user, alcf)) {
-            spnego_debug0("User not authorized");
-            return (ctx->ret = NGX_HTTP_FORBIDDEN);
+            if (alcf->allow_unauthorized) {
+                spnego_debug0("User not authorized, but allowed");
+                return (ctx->ret = NGX_OK);
+            } else {
+                spnego_debug0("User not authorized");
+                return (ctx->ret = NGX_HTTP_FORBIDDEN);
+            }
         }
 
         spnego_debug0("GSSAPI auth succeeded");
