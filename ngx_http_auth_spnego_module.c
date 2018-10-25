@@ -237,6 +237,7 @@ ngx_http_auth_spnego_create_loc_conf(
     conf->fqun = NGX_CONF_UNSET;
     conf->force_realm = NGX_CONF_UNSET;
     conf->allow_basic = NGX_CONF_UNSET;
+    conf->allow_unauthorized = NGX_CONF_UNSET;
     conf->auth_princs = NGX_CONF_UNSET_PTR;
 
     return conf;
