@@ -35,7 +35,7 @@
 #include <gssapi/gssapi.h>
 #include <gssapi/gssapi_krb5.h>
 #include <krb5.h>
-#include <com_err.h>
+#include <et/com_err.h>
 
 
 #define spnego_log_krb5_error(context,code) {\
