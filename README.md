@@ -69,6 +69,9 @@ this behavior is to add the following configuration to your location config.
 A future version of the module may make this behavior an option, but this should
 be a sufficient workaround for now.
 
+If you would like to enable GSS local name rules to rewrite usernames, you can
+specify the `auth_gss_map_to_local` option.
+
 Basic authentication fallback
 -----------------------------
 
