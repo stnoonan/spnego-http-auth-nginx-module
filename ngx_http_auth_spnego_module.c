@@ -899,7 +899,7 @@ ngx_http_auth_spnego_auth_user_gss(
 
     if (output_token.length) {
         spnego_token.data = (u_char *) output_token.value;
-        spnego_token.len = output_token.length - 1;
+        spnego_token.len = output_token.length;
 
         ctx->token_out_b64.len = ngx_base64_encoded_length(spnego_token.len);
         ctx->token_out_b64.data = ngx_pcalloc(r->pool, ctx->token_out_b64.len + 1);
@@ -911,6 +911,9 @@ ngx_http_auth_spnego_auth_user_gss(
         ngx_encode_base64(&ctx->token_out_b64, &spnego_token);
         gss_release_buffer(&minor_status2, &output_token);
     }
+	else {
+        ctx->token_out_b64.len = 0;
+	}
 
     /* getting user name at the other end of the request */
     major_status = gss_display_name(&minor_status, client_name, &output_token, NULL);
