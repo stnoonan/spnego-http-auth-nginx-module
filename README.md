@@ -8,20 +8,23 @@ authentication via [GSSAPI](http://en.wikipedia.org/wiki/GSSAPI)
 Purpose of this fork
 --------------------
 
-This fork is abandoned. Please use the original source: http://github.com/stnoonan/spnego-http-auth-nginx-module
+This fork only contains a README change from the original source
+http://github.com/stnoonan/spnego-http-auth-nginx-module that
+explains how to set up NGINX and Active Directory Kerberos authentication
+with multiple host names using the same service account.
 
 Prerequisites
 -------------
 
 Authentication has been tested with (at least) the following:
 
-* Nginx 1.2 through 1.7
+* Nginx 1.2 through 1.15
 * Internet Explorer 8 and above
 * Firefox 10 and above
 * Chrome 20 and above
 * Curl 7.x (GSS-Negotiate), 7.x (SPNEGO/fbopenssl)
 
-The underlying kerberos library used for these tests was MIT KRB5 v1.8.
+The underlying kerberos library used for these tests was MIT KRB5 v1.12.
 
 
 Installation
@@ -173,27 +176,66 @@ On the AD side, you need to:
 
 * Create a new user, whose name should be the service name you'll be using
   Kerberos authentication on. E.g. `app.example`.
+
 * Set the "User cannot change password" and "Password never expires" options
-  on the account
-* Set a strong password on it
+  on the account. If you are using AES-128 or AES-256, set also the "This
+  account supports Kerberos AES 128 bit encryption" option or the 256 bit one.
+  It is recommended to use AES, see [here](https://blogs.technet.microsoft.com/petergu/2013/04/14/interpreting-the-supportedencryptiontypes-registry-key/)
+  for more details.
+
+* Set a strong password on it. Feel free to forget it, you are not going to
+  insert it anywhere.
+
 * From a Windows `cmd.exe` window, generate the service principals and keytabs
-  for this user.  You need an SPN named `host/foo.example.com`, and another
-  named `HTTP/foo.example.com`. It is crucial that `foo.example.com` is the
-  DNS name of your web site in the intranet, and it is an `A` record.  Given
-  that `app.example` is the account name you created, you would execute:
+  for this user using [`ktpass`](https://docs.microsoft.com/en-us/windows-server/administration/windows-commands/ktpass).
+  
+  You need an SPN named `host/foo.example.com`, and another named
+  `HTTP/foo.example.com`.
+  
+  It is **crucial** that `foo.example.com` is the DNS name of your web site in the
+  intranet, and it is an `A` record. 
+  
+  Given that `app.example` is the account name you created, you would execute,
+  **in this exact order**:
 
         C:\> ktpass -princ host/foo.example.com@EXAMPLE.COM -mapuser
-        EXAMPLECOM\app.example -pass * -out host.keytab -ptype KRB5_NT_PRINCIPAL
+        EXAMPLECOM\app.example -pass * -out host.foo.keytab -ptype KRB5_NT_PRINCIPAL
+        -crypto AES256-SHA1
 
         C:\> ktpass -princ HTTP/foo.example.com@EXAMPLE.COM -mapuser
-        EXAMPLECOM\app.example -pass * -out http.keytab -ptype KRB5_NT_PRINCIPAL
+        EXAMPLECOM\app.example -pass * -out http.foo.keytab -ptype KRB5_NT_PRINCIPAL
+        -crypto AES256-SHA1
 
-* Verify that the correct SPNs are created:
+* If you need to support multiple host names using the same service account,
+  you can issue further `ktpass` commands, but **ensure to issue the `host/`
+  one first and the `HTTP/` one after**. Example:
+
+        C:\> ktpass -princ host/bar.example.com@EXAMPLE.COM -mapuser
+        EXAMPLECOM\app.example -pass * -out host.bar.keytab -ptype KRB5_NT_PRINCIPAL
+        -crypto AES256-SHA1
+
+        C:\> ktpass -princ HTTP/bar.example.com@EXAMPLE.COM -mapuser
+        EXAMPLECOM\app.example -pass * -out http.bar.keytab -ptype KRB5_NT_PRINCIPAL
+        -crypto AES256-SHA1
+
+* Verify that the correct SPNs are created using [`setspn`](https://social.technet.microsoft.com/wiki/contents/articles/717.service-principal-names-spns-setspn-syntax-setspn-exe.aspx)
 
         C:\> setspn -Q */foo.example.com
 
   it should yield both the `HTTP/` and `host/` SPNs, both mapped to the
-  `app.example` user.
+  `app.example` user. Example with a service accessible via both
+  `foo.example.com` and `bar.example.com`:
+
+        C:\Temp>setspn -Q */foo.example.com
+        Checking domain DC=example,DC=com
+        CN=app.example,OU=Service Accounts,DC=example,DC=com
+                HTTP/bar.example.com
+                host/bar.example.com
+                HTTP/foo.example.com
+                host/bar.example.com
+
+  `setspn` lists the entries in the reverse order they were created. So **it is crucial
+  that the HTTP and host entries are in pairs, in that order**.
 
 
 Crash course to UNIX KRB5 and nginx configuration
@@ -202,12 +244,12 @@ Crash course to UNIX KRB5 and nginx configuration
 * Verify that your UNIX machine is using the same DNS server as your DC, most
   likely it'll use the DC itself.
 
-* Create an /etc/krb5.conf configuration file, replacing the realm and kdc
+* Create an `/etc/krb5.conf` configuration file, replacing the realm and kdc
   host names with your own AD setup:
 
         [libdefaults]
-          default_tkt_enctypes = arcfour-hmac-md5
-          default_tgs_enctypes = arcfour-hmac-md5
+          default_tgs_enctypes = aes256-cts-hmac-sha1-96
+          default_tkt_enctypes = aes256-cts-hmac-sha1-96
           default_keytab_name  = FILE:/etc/krb5.keytab
           default_realm        = EXAMPLE.COM
           ticket_lifetime      = 24h
@@ -227,32 +269,37 @@ Crash course to UNIX KRB5 and nginx configuration
           .kerberos.server = EXAMPLE.COM
           .example.com     = EXAMPLE.COM
 
-* Copy the two keytab files (`host.keytab` and `http.keytab`) created with
-  ktpass on Windows to your UNIX machine.
+* Copy the keytab files (`host.foo.keytab`, `http.foo.keytab`, etc) created
+  with `ktpass` on Windows to your UNIX machine.
 
-* Create a krb5.keytab using ktutil, concatenating together the two SPNs keytabs:
+* Create a `krb5.keytab` using `ktutil`, concatenating together the keytabs
+  generated by `ktpass`:
 
         # ktutil
-        ktutil:  rkt host.keytab
-        ktutil:  rkt http.keytab
+        ktutil:  rkt host.foo.keytab
+        ktutil:  rkt http.foo.keytab
+        ktutil:  rkt host.bar.keytab
+        ktutil:  rkt http.bar.keytab
         ktutil:  wkt /etc/krb5.keytab
         ktutil:  quit
 
 * Verify that the created keytab file has been built correctly:
 
         # klist -kt /etc/krb5.keytab
-        Keytab name: WRFILE:/etc/krb5.keytab
+        Keytab name: FILE:/etc/krb5.keytab
         KVNO Timestamp         Principal
         ---- ----------------- --------------------------------------------------------
-        9 02/19/13 04:02:48 HTTP/foo.example.com@EXAMPLE.COM
-        8 02/19/13 04:02:48 host/foo.example.com@EXAMPLE.COM
+        1 02/19/13 04:02:48 host/foo.example.com@EXAMPLE.COM
+        2 02/19/13 04:02:48 HTTP/foo.example.com@EXAMPLE.COM
+        3 02/19/13 04:02:48 host/bar.example.com@EXAMPLE.COM
+        4 02/19/13 04:02:48 HTTP/bar.example.com@EXAMPLE.COM
 
   Key version numbers (`KVNO`) will be different in your case.
 
 
 * Verify that you are able to authenticate using the keytab, without password:
 
-        # kinit -5 -V -k -t /etc/krb5.keytab HTTP/foo.example.com
+        # kinit -5 -V -k -t /etc/krb5.keytab HTTP/bar.example.com
         Authenticated to Kerberos v5
 
         # klist
@@ -263,7 +310,13 @@ Crash course to UNIX KRB5 and nginx configuration
         02/19/13 17:37:42  02/20/13 03:37:40  krbtgt/EXAMPLE.COM@EXAMPLE.COM
                 renew until 02/20/13 17:37:42
 
-* Make the keytab file accessible only by root and the nginx group:
+  Please note that you will be able to authenticate **only** with the **LAST**
+  SPN that has been configured via `ktpass`, as windows user accounts keep the
+  mapping only with a single SPN, and that is the one displayed in the "User
+  logon name" field in the "Account" pane of an user account details screen of
+  Active Directory Users and Computers, or the first result of `setspn -Q`.
+
+* Make the keytab file readable only by root and the nginx group:
 
         # chmod 440 /etc/krb5.keytab
         # chown root:nginx /etc/krb5.keytab
