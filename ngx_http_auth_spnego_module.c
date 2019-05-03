@@ -742,17 +742,6 @@ use_keytab(
         ngx_http_request_t * r,
         ngx_str_t *keytab)
 {
-    size_t kt_env_sz = sizeof("KRB5_KTNAME=") + keytab->len;
-    char *kt_env = (char *) ngx_pcalloc(r->pool, kt_env_sz + 1);
-    if (NULL == kt_env) {
-        return false;
-    }
-    ngx_snprintf((u_char *) kt_env, kt_env_sz, "KRB5_KTNAME=%V%Z", keytab);
-    if (putenv(kt_env) != 0) {
-        spnego_debug0("Failed to update environment with keytab location");
-        return false;
-    }
-
     size_t kt_sz = keytab->len + 1;
     char *kt = (char *) ngx_pcalloc(r->pool, kt_sz);
     if (NULL == kt) {
@@ -864,7 +853,7 @@ ngx_http_auth_spnego_auth_user_gss(
 
     if (output_token.length) {
         spnego_token.data = (u_char *) output_token.value;
-        spnego_token.len = output_token.length - 1;
+        spnego_token.len = output_token.length;
 
         ctx->token_out_b64.len = ngx_base64_encoded_length(spnego_token.len);
         ctx->token_out_b64.data = ngx_pcalloc(r->pool, ctx->token_out_b64.len + 1);
@@ -876,6 +865,9 @@ ngx_http_auth_spnego_auth_user_gss(
         ngx_encode_base64(&ctx->token_out_b64, &spnego_token);
         gss_release_buffer(&minor_status2, &output_token);
     }
+	else {
+        ctx->token_out_b64.len = 0;
+	}
 
     /* getting user name at the other end of the request */
     major_status = gss_display_name(&minor_status, client_name, &output_token, NULL);
@@ -993,7 +985,7 @@ ngx_http_auth_spnego_handler(
              * not fall through to real SPNEGO */
             if (NGX_DECLINED == ngx_http_auth_spnego_basic(r, ctx, alcf)) {
                 spnego_debug0("Basic auth failed");
-                return (ctx->ret = NGX_HTTP_FORBIDDEN);
+                return (ctx->ret = NGX_HTTP_UNAUTHORIZED);
             }
 
             if (!ngx_spnego_authorized_principal(r, &r->headers_in.user, alcf)) {
