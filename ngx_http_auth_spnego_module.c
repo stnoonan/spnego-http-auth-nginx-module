@@ -777,17 +777,6 @@ use_keytab(
         ngx_http_request_t * r,
         ngx_str_t *keytab)
 {
-    size_t kt_env_sz = sizeof("KRB5_KTNAME=") + keytab->len;
-    char *kt_env = (char *) ngx_pcalloc(r->pool, kt_env_sz + 1);
-    if (NULL == kt_env) {
-        return false;
-    }
-    ngx_snprintf((u_char *) kt_env, kt_env_sz, "KRB5_KTNAME=%V%Z", keytab);
-    if (putenv(kt_env) != 0) {
-        spnego_debug0("Failed to update environment with keytab location");
-        return false;
-    }
-
     size_t kt_sz = keytab->len + 1;
     char *kt = (char *) ngx_pcalloc(r->pool, kt_sz);
     if (NULL == kt) {
