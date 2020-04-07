@@ -5,6 +5,10 @@ if uname -o | grep -q FreeBSD; then
     ngx_feature_libs="$ngx_feature_libs -lgssapi"
 fi
 
+if uname -a | grep -q NetBSD; then
+    ngx_feature_libs="-lgssapi -lkrb5 -lcom_err"
+fi
+
 if test -n "$ngx_module_link"; then
     ngx_module_type=HTTP
     ngx_module_name=ngx_http_auth_spnego_module
