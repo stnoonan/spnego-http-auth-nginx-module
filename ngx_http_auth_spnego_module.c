@@ -37,6 +37,7 @@
 #include <krb5.h>
 #include <com_err.h>
 
+#define discard_const(ptr) ((void *)((uintptr_t)(ptr)))
 
 #define spnego_log_krb5_error(context,code) {\
     const char* ___kerror = krb5_get_error_message(context, code);\
@@ -114,6 +115,7 @@ typedef struct {
     ngx_flag_t force_realm;
     ngx_flag_t allow_basic;
     ngx_array_t *auth_princs;
+    ngx_flag_t map_to_local;
 } ngx_http_auth_spnego_loc_conf_t;
 
 #define SPNEGO_NGX_CONF_FLAGS NGX_HTTP_MAIN_CONF\
@@ -180,6 +182,13 @@ static ngx_command_t ngx_http_auth_spnego_commands[] = {
         offsetof(ngx_http_auth_spnego_loc_conf_t, auth_princs),
         NULL},
 
+    {ngx_string("auth_gss_map_to_local"),
+        SPNEGO_NGX_CONF_FLAGS,
+        ngx_conf_set_flag_slot,
+        NGX_HTTP_LOC_CONF_OFFSET,
+        offsetof(ngx_http_auth_spnego_loc_conf_t, map_to_local),
+        NULL},
+
     ngx_null_command
 };
 
@@ -230,6 +239,7 @@ ngx_http_auth_spnego_create_loc_conf(
     conf->force_realm = NGX_CONF_UNSET;
     conf->allow_basic = NGX_CONF_UNSET;
     conf->auth_princs = NGX_CONF_UNSET_PTR;
+    conf->map_to_local = NGX_CONF_UNSET;
 
     return conf;
 }
@@ -256,6 +266,8 @@ ngx_http_auth_spnego_merge_loc_conf(
     ngx_conf_merge_off_value(conf->allow_basic, prev->allow_basic, 1);
     ngx_conf_merge_ptr_value(conf->auth_princs, prev->auth_princs, NGX_CONF_UNSET_PTR);
 
+    ngx_conf_merge_off_value(conf->map_to_local, prev->map_to_local, 0);
+
 #if (NGX_DEBUG)
     ngx_conf_log_error(NGX_LOG_INFO, cf, 0, "auth_spnego: protect = %i",
             conf->protect);
@@ -277,6 +289,8 @@ ngx_http_auth_spnego_merge_loc_conf(
                     "auth_spnego: auth_princs = %.*s", auth_princs[ii].len, auth_princs[ii].data);
         }
     }
+    ngx_conf_log_error(NGX_LOG_INFO, cf, 0, "auth_spnego: map_to_local = %i",
+            conf->map_to_local);
 #endif
 
     return NGX_CONF_OK;
@@ -871,7 +885,6 @@ ngx_http_auth_spnego_auth_user_gss(
 
     /* getting user name at the other end of the request */
     major_status = gss_display_name(&minor_status, client_name, &output_token, NULL);
-    gss_release_name(&minor_status, &client_name);
     if (GSS_ERROR(major_status)) {
         spnego_log_error("%s", get_gss_error(r->pool, minor_status,
                     "gss_display_name() failed"));
@@ -879,6 +892,19 @@ ngx_http_auth_spnego_auth_user_gss(
     }
 
     if (output_token.length) {
+        /* Apply local rules to map Kerberos Principals to short names */
+        if (alcf->map_to_local) {
+            gss_OID mech_type = discard_const(gss_mech_krb5);
+            output_token = (gss_buffer_desc) GSS_C_EMPTY_BUFFER;
+            major_status = gss_localname(&minor_status, client_name,
+                    mech_type, &output_token);
+            if (GSS_ERROR(major_status)) {
+                spnego_log_error("%s", get_gss_error(r->pool, minor_status,
+                            "gss_localname() failed"));
+                spnego_error(NGX_ERROR);
+            }
+        }
+
         /* TOFIX dirty quick trick for now (no "-1" i.e. include '\0' */
         ngx_str_t user = {
             output_token.length,
