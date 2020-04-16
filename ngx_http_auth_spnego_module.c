@@ -35,7 +35,6 @@
 #include <gssapi/gssapi.h>
 #include <gssapi/gssapi_krb5.h>
 #include <krb5.h>
-#include <com_err.h>
 
 #define discard_const(ptr) ((void *)((uintptr_t)(ptr)))
 
