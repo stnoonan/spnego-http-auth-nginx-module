@@ -419,17 +419,40 @@ ngx_spnego_authorized_principal(
     if (NGX_CONF_UNSET_PTR == alcf->auth_princs) {
         return true;
     }
-    size_t ii = 0;
-    ngx_str_t *auth_princs = alcf->auth_princs->elts;
+
     spnego_debug1("Testing against %d auth princs", alcf->auth_princs->nelts);
-    for (; ii < alcf->auth_princs->nelts; ++ii) {
-        if (auth_princs[ii].len != princ->len) {
+
+    ngx_str_t *auth_princs = alcf->auth_princs->elts;  
+    for(size_t i = 0; i < alcf->auth_princs->nelts; i++) {
+#if (NGX_PCRE)
+        ngx_regex_compile_t rc;
+        u_char errstr[NGX_MAX_CONF_ERRSTR];
+
+	ngx_memzero(&rc, sizeof(ngx_regex_compile_t));
+
+        rc.pattern = auth_princs[i];
+	rc.pool = r->pool;
+	rc.err.len = NGX_MAX_CONF_ERRSTR;
+	rc.err.data = errstr;
+        
+        if(ngx_regex_compile(&rc) != NGX_OK) {
+            spnego_debug1("Failed to compile regex %s", auth_princs[i].data);
+	    continue;
+	}
+
+        if(ngx_regex_exec(rc.regex, princ, NULL, 0) == NGX_OK){
+            spnego_debug2("Authorized user %.*s", princ->len, princ->data);
+	    return true;
+        }
+#else
+        if(auth_princs[i].len != princ->len) {
             continue;
         }
-        if (ngx_strncmp(auth_princs[ii].data, princ->data, princ->len) == 0) {
+        if(ngx_strncmp(auth_princs[i].data, princ->data, princ->len) == 0) {
             spnego_debug2("Authorized user %.*s", princ->len, princ->data);
             return true;
         }
+#endif
     }
     return false;
 }
