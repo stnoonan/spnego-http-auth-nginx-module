@@ -85,11 +85,9 @@ User credentials can be delegated to nginx using the `auth_gss_delegate_credenti
  directive. This directive will enable unconstrained delegation if the user chooses 
  to delegate their credentials. Constrained delegation (S4U2proxy) can also be enabled using the 
  `auth_gss_constrained_delegation` directive together with the `auth_gss_delegate_credentials` 
- directive. Constrained delegation is currently only supported using the negotiate authentication 
- scheme and has been tested with MIT Kerberos (Use at your own risk is using Heimdal Kerberos). 
- To specify the ccache file name to store the service ticket used for constrained delegation, 
- set the `auth_gss_service_ccache` directive. Otherwise, the default ccache name will 
- be used.
+ directive.To specify the ccache file name to store the service ticket used for constrained 
+ delegation, set the `auth_gss_service_ccache` directive. Otherwise, the default ccache name 
+ will be used.
 
     auth_gss_service_ccache /tmp/krb5cc_0;
     auth_gss_delegate_credentials on;
@@ -101,6 +99,9 @@ The delegated credentials will be stored within the systems tmp directory. Once 
  can include passing it to a fcgi program using the `fastcgi_param` directive.
 
     fastcgi_param KRB5CCNAME $krb5_cc_name;
+
+Constrained delegation is currently only supported using the negotiate authentication scheme
+ and has only been testing with MIT Kerberos (Use at your own risk if using Heimdal Kerberos).
 
 Basic authentication fallback
 -----------------------------
