@@ -85,7 +85,7 @@ User credentials can be delegated to nginx using the `auth_gss_delegate_credenti
  directive. This directive will enable unconstrained delegation if the user chooses 
  to delegate their credentials. Constrained delegation (S4U2proxy) can also be enabled using the 
  `auth_gss_constrained_delegation` directive together with the `auth_gss_delegate_credentials` 
- directive. To specify the ccache file name to store the service ticket used for constrained  
+ directive. To specify the ccache file name to store the service ticket used for constrained 
  delegation, set the `auth_gss_service_ccache` directive. Otherwise, the default ccache name will 
  be used.
 
