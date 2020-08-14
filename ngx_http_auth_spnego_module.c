@@ -340,7 +340,9 @@ ngx_http_auth_spnego_create_loc_conf(
     conf->force_realm = NGX_CONF_UNSET;
     conf->allow_basic = NGX_CONF_UNSET;
     conf->auth_princs = NGX_CONF_UNSET_PTR;
+#if (NGX_PCRE)
     conf->auth_princs_regex = NGX_CONF_UNSET_PTR;
+#endif
     conf->map_to_local = NGX_CONF_UNSET;
     conf->delegate_credentials = NGX_CONF_UNSET;
     conf->constrained_delegation = NGX_CONF_UNSET;
@@ -372,7 +374,10 @@ ngx_http_auth_spnego_merge_loc_conf(
     ngx_conf_merge_off_value(conf->allow_basic, prev->allow_basic, 1);
 	
     ngx_conf_merge_ptr_value(conf->auth_princs, prev->auth_princs, NGX_CONF_UNSET_PTR);
+
+#if (NGX_PCRE)
     ngx_conf_merge_ptr_value(conf->auth_princs_regex, prev->auth_princs_regex, NGX_CONF_UNSET_PTR);
+#endif
 	
     ngx_conf_merge_off_value(conf->map_to_local, prev->map_to_local, 0);
 
