@@ -94,7 +94,7 @@ User credentials can be delegated to nginx using the `auth_gss_delegate_credenti
     auth_gss_constrained_delegation on;
 
 The delegated credentials will be stored within the systems tmp directory. Once the
- request is completed, the credentials file will be destroyed. The mame of the credentials 
+ request is completed, the credentials file will be destroyed. The name of the credentials 
  file will be specified within the nginx variable `$krb5_cc_name`. Usage of the variable 
  can include passing it to a fcgi program using the `fastcgi_param` directive.
 
