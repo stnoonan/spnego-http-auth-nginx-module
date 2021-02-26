@@ -1043,7 +1043,7 @@ ngx_http_auth_spnego_handler(
             /* If basic auth is enabled and basic creds are supplied
              * attempt basic auth.  If we attempt basic auth, we do
              * not fall through to real SPNEGO */
-            if (NGX_DECLINED == ngx_http_auth_spnego_basic(r, ctx, alcf)) {
+            if (NGX_OK != ngx_http_auth_spnego_basic(r, ctx, alcf)) {
                 spnego_debug0("Basic auth failed");
                 if (NGX_ERROR == ngx_http_auth_spnego_headers_basic_only(r, ctx, alcf)) {
                     spnego_debug0("Error setting headers");
