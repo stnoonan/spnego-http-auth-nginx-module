@@ -59,6 +59,12 @@ multiple entries, one per line.
     auth_gss_authorized_principal <username>@<realm>
     auth_gss_authorized_principal <username2>@<realm>
 
+Users can also be authorized using a regex pattern via the `auth_gss_authorized_principal_regex`
+ directive. This directive can be used together with the `auth_gss_authorized_principal` directive.
+
+    auth_gss_authorized_principal <username>@<realm>
+    auth_gss_authorized_principal_regex ^(<username>)/(<group>)@<realm>$
+
 The remote user header in nginx can only be set by doing basic authentication.
 Thus, this module sets a bogus basic auth header that will reach your backend
 application in order to set this header/nginx variable.  The easiest way to disable
@@ -71,6 +77,31 @@ be a sufficient workaround for now.
 
 If you would like to enable GSS local name rules to rewrite usernames, you can
 specify the `auth_gss_map_to_local` option.
+
+Credential Delegation
+-----------------------------
+
+User credentials can be delegated to nginx using the `auth_gss_delegate_credentials` 
+ directive. This directive will enable unconstrained delegation if the user chooses 
+ to delegate their credentials. Constrained delegation (S4U2proxy) can also be enabled using the 
+ `auth_gss_constrained_delegation` directive together with the `auth_gss_delegate_credentials` 
+ directive. To specify the ccache file name to store the service ticket used for constrained 
+ delegation, set the `auth_gss_service_ccache` directive. Otherwise, the default ccache name 
+ will be used.
+
+    auth_gss_service_ccache /tmp/krb5cc_0;
+    auth_gss_delegate_credentials on;
+    auth_gss_constrained_delegation on;
+
+The delegated credentials will be stored within the systems tmp directory. Once the
+ request is completed, the credentials file will be destroyed. The name of the credentials 
+ file will be specified within the nginx variable `$krb5_cc_name`. Usage of the variable 
+ can include passing it to a fcgi program using the `fastcgi_param` directive.
+
+    fastcgi_param KRB5CCNAME $krb5_cc_name;
+
+Constrained delegation is currently only supported using the negotiate authentication scheme
+ and has only been testing with MIT Kerberos (Use at your own risk if using Heimdal Kerberos).
 
 Basic authentication fallback
 -----------------------------
