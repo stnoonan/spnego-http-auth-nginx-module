@@ -751,7 +751,7 @@ static ngx_int_t
 ngx_http_auth_spnego_store_delegated_creds(ngx_http_request_t *r,
                                            ngx_str_t *principal_name,
                                            creds_info delegated_creds) {
-    krb5_context kcontext;
+    krb5_context kcontext = NULL;
     krb5_principal principal = NULL;
     krb5_ccache ccache = NULL;
     krb5_error_code kerr = 0;
