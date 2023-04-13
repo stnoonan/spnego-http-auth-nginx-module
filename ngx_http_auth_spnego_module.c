@@ -130,6 +130,7 @@ typedef struct {
     ngx_str_t keytab;
     ngx_str_t service_ccache;
     ngx_str_t srvcname;
+    ngx_str_t shm_zone_name;
     ngx_flag_t fqun;
     ngx_flag_t force_realm;
     ngx_flag_t allow_basic;
@@ -151,6 +152,10 @@ static ngx_command_t ngx_http_auth_spnego_commands[] = {
     {ngx_string("auth_gss"), SPNEGO_NGX_CONF_FLAGS, ngx_conf_set_flag_slot,
      NGX_HTTP_LOC_CONF_OFFSET,
      offsetof(ngx_http_auth_spnego_loc_conf_t, protect), NULL},
+
+    {ngx_string("auth_gss_zone_name"), NGX_HTTP_MAIN_CONF|NGX_CONF_TAKE1,
+     ngx_conf_set_str_slot, NGX_HTTP_LOC_CONF_OFFSET,
+     offsetof(ngx_http_auth_spnego_loc_conf_t, shm_zone_name), NULL},
 
     {ngx_string("auth_gss_realm"), SPNEGO_NGX_CONF_FLAGS, ngx_conf_set_str_slot,
      NGX_HTTP_LOC_CONF_OFFSET, offsetof(ngx_http_auth_spnego_loc_conf_t, realm),
@@ -308,6 +313,32 @@ static void *ngx_http_auth_spnego_create_loc_conf(ngx_conf_t *cf) {
     return conf;
 }
 
+static ngx_int_t ngx_http_auth_spnego_init_shm_zone(ngx_shm_zone_t *shm_zone,
+                                                    void *data) {
+    if (data) {
+        shm_zone->data = data;
+        return NGX_OK;
+    }
+
+    shm_zone->data = shm_zone->shm.addr;
+    return NGX_OK;
+}
+
+static ngx_int_t ngx_http_auth_spnego_create_shm_zone(ngx_conf_t *cf, 
+                                                      ngx_str_t *name) {
+    if (shm_zone != NULL) return NGX_OK;
+
+    shm_zone =
+        ngx_shared_memory_add(cf, name, 65536, &ngx_http_auth_spnego_module);
+    if (shm_zone == NULL) {
+        return NGX_ERROR;
+    }
+
+    shm_zone->init = ngx_http_auth_spnego_init_shm_zone;
+
+    return NGX_OK;
+}
+
 static char *ngx_http_auth_spnego_merge_loc_conf(ngx_conf_t *cf, void *parent,
                                                  void *child) {
     ngx_http_auth_spnego_loc_conf_t *prev = parent;
@@ -315,6 +346,15 @@ static char *ngx_http_auth_spnego_merge_loc_conf(ngx_conf_t *cf, void *parent,
 
     /* "off" by default */
     ngx_conf_merge_off_value(conf->protect, prev->protect, 0);
+    ngx_conf_merge_str_value(conf->shm_zone_name, prev->shm_zone_name, SHM_ZONE_NAME);
+
+    if (conf->protect != 0) {
+        if (ngx_http_auth_spnego_create_shm_zone(cf, &conf->shm_zone_name) != NGX_OK) {
+            ngx_conf_log_error(NGX_LOG_INFO, cf, 0,
+                "auth_spnego: failed to create shared memory zone");
+            return NGX_CONF_ERROR;
+        }
+    }
 
     ngx_conf_merge_str_value(conf->realm, prev->realm, "");
     ngx_conf_merge_str_value(conf->keytab, prev->keytab, "/etc/krb5.keytab");
@@ -440,30 +480,6 @@ static ngx_int_t ngx_http_auth_spnego_add_variable(ngx_conf_t *cf,
     return NGX_OK;
 }
 
-static ngx_int_t ngx_http_auth_spnego_init_shm_zone(ngx_shm_zone_t *shm_zone,
-                                                    void *data) {
-    if (data) {
-        shm_zone->data = data;
-        return NGX_OK;
-    }
-
-    shm_zone->data = shm_zone->shm.addr;
-    return NGX_OK;
-}
-
-static ngx_int_t ngx_http_auth_spnego_create_shm_zone(ngx_conf_t *cf) {
-    ngx_str_t name = ngx_string(SHM_ZONE_NAME);
-
-    shm_zone =
-        ngx_shared_memory_add(cf, &name, 65536, &ngx_http_auth_spnego_module);
-    if (shm_zone == NULL) {
-        return NGX_ERROR;
-    }
-
-    shm_zone->init = ngx_http_auth_spnego_init_shm_zone;
-
-    return NGX_OK;
-}
 
 static ngx_int_t ngx_http_auth_spnego_init(ngx_conf_t *cf) {
     ngx_http_handler_pt *h;
@@ -477,10 +493,6 @@ static ngx_int_t ngx_http_auth_spnego_init(ngx_conf_t *cf) {
     }
 
     *h = ngx_http_auth_spnego_handler;
-
-    if (ngx_http_auth_spnego_create_shm_zone(cf) != NGX_OK) {
-        return NGX_ERROR;
-    }
 
     ngx_str_t var_name = ngx_string(CCACHE_VARIABLE_NAME);
     if (ngx_http_auth_spnego_add_variable(cf, &var_name) != NGX_OK) {
