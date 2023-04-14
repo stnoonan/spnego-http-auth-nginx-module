@@ -1281,6 +1281,10 @@ static ngx_int_t ngx_http_auth_spnego_obtain_server_credentials(
     krb5_principal principal = NULL;
     krb5_get_init_creds_opt gicopts;
     krb5_creds creds;
+#ifdef HEIMDAL_DEPRECATED
+    // only used to call krb5_get_init_creds_opt_alloc() in newer heimdal
+    krb5_get_init_creds_opt *gicopts_l;
+#endif
 
     char *principal_name = NULL;
     char *tgs_principal_name = NULL;
@@ -1363,7 +1367,12 @@ static ngx_int_t ngx_http_auth_spnego_obtain_server_credentials(
 
     spnego_debug1("Obtaining new credentials for %s", principal_name);
 
+#ifndef HEIMDAL_DEPRECATED
     krb5_get_init_creds_opt_init(&gicopts);
+#else
+    gicopts_l = &gicopts;
+    krb5_get_init_creds_opt_alloc(kcontext, &gicopts_l);
+#endif
     krb5_get_init_creds_opt_set_forwardable(&gicopts, 1);
 
     size_t tgs_principal_name_size =
