@@ -519,6 +519,9 @@ ngx_http_auth_spnego_headers_basic_only(ngx_http_request_t *r,
     }
 
     r->headers_out.www_authenticate->hash = 1;
+#if defined(nginx_version) && nginx_version >= 1023000
+    r->headers_out.www_authenticate->next = NULL;
+#endif
     r->headers_out.www_authenticate->key.len = sizeof("WWW-Authenticate") - 1;
     r->headers_out.www_authenticate->key.data = (u_char *)"WWW-Authenticate";
     r->headers_out.www_authenticate->value.len = value.len;
@@ -555,6 +558,9 @@ ngx_http_auth_spnego_headers(ngx_http_request_t *r,
     }
 
     r->headers_out.www_authenticate->hash = 1;
+#if defined(nginx_version) && nginx_version >= 1023000
+    r->headers_out.www_authenticate->next = NULL;
+#endif
     r->headers_out.www_authenticate->key.len = sizeof("WWW-Authenticate") - 1;
     r->headers_out.www_authenticate->key.data = (u_char *)"WWW-Authenticate";
     r->headers_out.www_authenticate->value.len = value.len;
@@ -576,6 +582,9 @@ ngx_http_auth_spnego_headers(ngx_http_request_t *r,
         }
 
         r->headers_out.www_authenticate->hash = 2;
+#if defined(nginx_version) && nginx_version >= 1023000
+        r->headers_out.www_authenticate->next = NULL;
+#endif
         r->headers_out.www_authenticate->key.len =
             sizeof("WWW-Authenticate") - 1;
         r->headers_out.www_authenticate->key.data =
@@ -768,7 +777,7 @@ static ngx_int_t
 ngx_http_auth_spnego_store_delegated_creds(ngx_http_request_t *r,
                                            ngx_str_t *principal_name,
                                            creds_info delegated_creds) {
-    krb5_context kcontext;
+    krb5_context kcontext = NULL;
     krb5_principal principal = NULL;
     krb5_ccache ccache = NULL;
     krb5_error_code kerr = 0;
