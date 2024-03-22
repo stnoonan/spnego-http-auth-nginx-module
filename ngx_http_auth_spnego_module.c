@@ -945,6 +945,7 @@ ngx_int_t ngx_http_auth_spnego_basic(ngx_http_request_t *r,
             }
             ngx_snprintf(user.data, user.len, "%V@%V%Z", &r->headers_in.user.data,
                          &alcf->realm);
+            spnego_log_error(user.data);
         } else {
             user.data = ngx_palloc(r->pool, user.len);
             if (NULL == user.data) {
