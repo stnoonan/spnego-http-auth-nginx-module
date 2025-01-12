@@ -383,22 +383,22 @@ static char *ngx_http_auth_spnego_merge_loc_conf(ngx_conf_t *cf, void *parent,
                              prev->constrained_delegation, 0);
 
 #if (NGX_DEBUG)
-    ngx_conf_log_error(NGX_LOG_INFO, cf, 0, "auth_spnego: protect = %i",
+    ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0, "auth_spnego: protect = %i",
                        conf->protect);
-    ngx_conf_log_error(NGX_LOG_INFO, cf, 0, "auth_spnego: realm@0x%p = %s",
+    ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0, "auth_spnego: realm@0x%p = %s",
                        conf->realm.data, conf->realm.data);
-    ngx_conf_log_error(NGX_LOG_INFO, cf, 0, "auth_spnego: keytab@0x%p = %s",
+    ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0, "auth_spnego: keytab@0x%p = %s",
                        conf->keytab.data, conf->keytab.data);
-    ngx_conf_log_error(NGX_LOG_INFO, cf, 0,
+    ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0,
                        "auth_spnego: service_ccache@0x%p = %s",
                        conf->service_ccache.data, conf->service_ccache.data);
-    ngx_conf_log_error(NGX_LOG_INFO, cf, 0, "auth_spnego: srvcname@0x%p = %s",
+    ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0, "auth_spnego: srvcname@0x%p = %s",
                        conf->srvcname.data, conf->srvcname.data);
-    ngx_conf_log_error(NGX_LOG_INFO, cf, 0, "auth_spnego: fqun = %i",
+    ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0, "auth_spnego: fqun = %i",
                        conf->fqun);
-    ngx_conf_log_error(NGX_LOG_INFO, cf, 0, "auth_spnego: allow_basic = %i",
+    ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0, "auth_spnego: allow_basic = %i",
                        conf->allow_basic);
-    ngx_conf_log_error(NGX_LOG_INFO, cf, 0, "auth_spnego: force_realm = %i",
+    ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0, "auth_spnego: force_realm = %i",
                        conf->force_realm);
 
     if (NGX_CONF_UNSET_PTR != conf->auth_princs) {
@@ -424,14 +424,14 @@ static char *ngx_http_auth_spnego_merge_loc_conf(ngx_conf_t *cf, void *parent,
     }
 #endif
 
-    ngx_conf_log_error(NGX_LOG_INFO, cf, 0, "auth_spnego: map_to_local = %i",
+    ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0, "auth_spnego: map_to_local = %i",
                        conf->map_to_local);
 
-    ngx_conf_log_error(NGX_LOG_INFO, cf, 0,
+    ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0,
                        "auth_spnego: delegate_credentials = %i",
                        conf->delegate_credentials);
 
-    ngx_conf_log_error(NGX_LOG_INFO, cf, 0,
+    ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0,
                        "auth_spnego: constrained_delegation = %i",
                        conf->constrained_delegation);
 #endif
