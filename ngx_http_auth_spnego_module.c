@@ -883,7 +883,6 @@ ngx_int_t ngx_http_auth_spnego_basic(ngx_http_request_t *r,
     krb5_principal server = NULL;
     krb5_creds creds;
     krb5_get_init_creds_opt *gic_options = NULL;
-    int kret = 0;
     char *name = NULL;
     char *p = NULL;
 
@@ -915,9 +914,9 @@ ngx_int_t ngx_http_auth_spnego_basic(ngx_http_request_t *r,
                      &host_name, &alcf->realm);
     }
 
-    kret = krb5_parse_name(kcontext, (const char *)service.data, &server);
+    code = krb5_parse_name(kcontext, (const char *)service.data, &server);
 
-    if (kret) {
+    if (code) {
         spnego_log_error("Kerberos error:  Unable to parse service name");
         spnego_log_krb5_error(kcontext, code);
         spnego_error(NGX_ERROR);
