@@ -813,7 +813,7 @@ ngx_http_auth_spnego_store_delegated_creds(ngx_http_request_t *r,
                           ngx_strlen("/") + ngx_strlen(escaped)) +
                          1;
     ccname = (char *)ngx_pcalloc(r->pool, ccname_size);
-    if (ccname == NULL) {
+    if (NULL == ccname) {
         return NGX_ERROR;
     }
 
@@ -853,7 +853,7 @@ ngx_http_auth_spnego_store_delegated_creds(ngx_http_request_t *r,
     ngx_http_auth_spnego_set_variable(r, &var_name, &var_value);
 
     ngx_pool_cleanup_t *cln = ngx_pool_cleanup_add(r->pool, 0);
-    if (cln == NULL) {
+    if (NULL == cln) {
         return NGX_ERROR;
     }
 
