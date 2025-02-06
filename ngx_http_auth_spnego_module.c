@@ -891,7 +891,7 @@ ngx_int_t ngx_http_auth_spnego_basic(ngx_http_request_t *r,
     krb5_creds creds;
     krb5_get_init_creds_opt *gic_options = NULL;
     char *name = NULL;
-    char *p = NULL;
+    unsigned char *p = NULL;
 
     code = krb5_init_context(&kcontext);
     if (code) {
@@ -939,7 +939,8 @@ ngx_int_t ngx_http_auth_spnego_basic(ngx_http_request_t *r,
     free(name);
     name = NULL;
 
-    p = ngx_strchr(r->headers_in.user.data, '@');
+    p = ngx_strlchr(r->headers_in.user.data,
+                    r->headers_in.user.data + r->headers_in.user.len, '@');
     user.len = r->headers_in.user.len + 1;
     if (NULL == p) {
         if (alcf->force_realm && alcf->realm.len && alcf->realm.data) {
