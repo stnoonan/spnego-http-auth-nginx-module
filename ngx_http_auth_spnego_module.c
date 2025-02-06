@@ -813,6 +813,9 @@ ngx_http_auth_spnego_store_delegated_creds(ngx_http_request_t *r,
                           ngx_strlen("/") + ngx_strlen(escaped)) +
                          1;
     ccname = (char *)ngx_pcalloc(r->pool, ccname_size);
+    if (ccname == NULL) {
+        return NGX_ERROR;
+    }
 
     ngx_snprintf((u_char *)ccname, ccname_size, "FILE:%s/%*s", P_tmpdir,
                  ngx_strlen(escaped), escaped);
@@ -850,6 +853,10 @@ ngx_http_auth_spnego_store_delegated_creds(ngx_http_request_t *r,
     ngx_http_auth_spnego_set_variable(r, &var_name, &var_value);
 
     ngx_pool_cleanup_t *cln = ngx_pool_cleanup_add(r->pool, 0);
+    if (cln == NULL) {
+        return NGX_ERROR;
+    }
+
     cln->handler = ngx_http_auth_spnego_krb5_destroy_ccache;
     cln->data = ccname;
 done:
