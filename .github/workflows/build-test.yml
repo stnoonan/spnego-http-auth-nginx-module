@@ -1,0 +1,77 @@
+name: Build and test
+
+on: [push]
+
+jobs:
+
+  build-test:
+
+    # nginx-dev doesn't exist on releases before 24.04
+    strategy:
+      matrix:
+        os:
+          - ubuntu-24.04
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+
+      - name: Update APT package index
+        run: |
+          sudo apt-get update -qq
+
+      - name: Install packages
+        run: |
+          sudo apt-get install                                                \
+            nginx nginx-dev build-essential libkrb5-dev curl                  \
+            slapd ldap-utils                                                  \
+            krb5-admin-server	krb5-kdc krb5-kdc-ldap                          \
+            libsasl2-modules-gssapi-mit                                       \
+            php-fpm php-ldap
+
+      - name: Check out repository code
+        uses: actions/checkout@v4
+
+      - name: Create build directory
+        run: |
+          mkdir "${{ github.workspace }}/build"
+
+      - name: Run configure script
+        run: |
+          cd /usr/share/nginx/src
+          . ./conf_flags
+          ./configure                                                         \
+            --with-cc-opt="-fPIC"                                             \
+            --with-ld-opt="-Wl,-z,relro"                                      \
+            "${NGX_CONF_FLAGS[@]}"                                            \
+            --add-dynamic-module="${{ github.workspace }}"                    \
+            --builddir="${{ github.workspace }}/build"
+
+      - name: Build module
+        run: |
+          cd "${{ github.workspace }}/build"
+          make                                                                \
+            -f "${{ github.workspace }}/build/Makefile"                       \
+            -C "/usr/share/nginx/src"                                         \
+            modules
+
+      - name: List files in the repository and build dir
+        run: |
+          echo "=== Workspace: ${{ github.workspace }} ==="
+          ls -al "${{ github.workspace }}"
+          echo "=== Build dir: ${{ github.workspace }}/build ==="
+          ls -al "${{ github.workspace }}/build"
+
+      - name: Install module
+        run: |
+          sudo mkdir -p /usr/lib/nginx/modules/
+          sudo cp "${{ github.workspace }}/build/ngx_http_auth_spnego_module.so" /usr/lib/nginx/modules/
+          sudo mkdir -p /usr/share/nginx/modules-available/
+          echo "load_module modules/ngx_http_auth_spnego_module.so;" >> "${{ github.workspace }}/build/mod-http-auth-spnego.conf"
+          sudo cp "${{ github.workspace }}/build/mod-http-auth-spnego.conf" /usr/share/nginx/modules-available/
+          sudo mkdir -p /etc/nginx/modules-enabled/
+          sudo ln -sf /usr/share/nginx/modules-available/mod-http-auth-spnego.conf /etc/nginx/modules-enabled/50-mod-http-auth-spnego.conf
+
+      - name: Run test script
+        run: |
+          sudo bash "${{ github.workspace }}/scripts/kerberos_ldap"

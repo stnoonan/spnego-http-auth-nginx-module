@@ -1,0 +1,741 @@
+#!/bin/sh
+
+# Test that regular authentication is working, and that constrained delegation
+# is working. In order for this to be doable, we set up a Kerberos KDC with
+# a LDAP-based backend (the LDAP DB driver has support for the necessesary
+# hooks that enable constrained delegation, the standard MIT DB2 backend does
+# not). Furthermore, we use a simple PHP script to demonstrate the delegation
+# by connecting to the LDAP server using the client principals passed in via
+# the HTTP connection.
+#
+# Note that this script is written to be usable both in autopkgtest and Github
+# workflows (which also implies that it needs to be compatible with Debian and
+# Ubuntu).
+#
+# Copyright (C) 2025 David Härdeman <david@hardeman.nu>
+
+EX=0
+CURL_OUTPUT="http_body"
+CURL_NONEGOTIATE="curl --max-time 60 --silent --fail-with-body -o ${CURL_OUTPUT}"
+CURL_NEGOTIATE="${CURL_NONEGOTIATE} --negotiate -u :"
+DOMAIN="example.com"
+TEST_HOST="server"
+TEST_HOST_FQDN="${TEST_HOST}.${DOMAIN}"
+LDAP_BASE_DN="$(echo "${DOMAIN}" | sed 's/\./,/;s/\([^,]\+\)/dc=\1/g')"
+LDAP_SERVICES_DN="ou=Services,${LDAP_BASE_DN}"
+LDAP_KRB_DN="ou=kerberos,${LDAP_SERVICES_DN}"
+LDAP_KRB_CONTAINER_DN="cn=krbContainer,${LDAP_KRB_DN}"
+LDAP_KDC_DN="uid=kdc,${LDAP_KRB_DN}"
+LDAP_KDC_PW="kdctest"
+LDAP_KADMIN_DN="uid=kadmin,${LDAP_KRB_DN}"
+LDAP_KADMIN_PW="kadmintest"
+LDAP_ADMIN_DN="cn=admin,${LDAP_BASE_DN}"
+LDAP_ADMIN_PW="test"
+KERBEROS_REALM="$(echo "${DOMAIN}" | tr "[:lower:]" "[:upper:]")"
+export LC_ALL=C
+export DEBIAN_FRONTEND=noninteractive
+
+
+die()
+{
+	echo "FAILED"
+	exit 1
+}
+
+
+if [ -n "${AUTOPKGTEST_TMP}" ]; then
+	cd "${AUTOPKGTEST_TMP}" || exit 1
+elif [ -n "${GITHUB_WORKSPACE}" ]; then
+	# Yeah, this env variable won't be passed on by sudo...
+	cd "${GITHUB_WORKSPACE}" || exit 1
+fi
+
+
+cat <<EOF
+Test Configuration
+==============================================================================
+Dir				: $(pwd)
+Domain				: ${DOMAIN}
+Kerberos realm			: ${KERBEROS_REALM}
+Host FQDN			: ${TEST_HOST_FQDN}
+LDAP base DN			: ${LDAP_BASE_DN}
+LDAP services DN		: ${LDAP_SERVICES_DN}
+LDAP kerberos DN		: ${LDAP_KRB_DN}
+LDAP kerberos container DN	: ${LDAP_KRB_CONTAINER_DN}
+LDAP KDC DN			: ${LDAP_KDC_DN}
+LDAP KDC PW			: ${LDAP_KDC_PW}
+LDAP kadmin DN			: ${LDAP_KADMIN_DN}
+LDAP kadmin PW			: ${LDAP_KADMIN_PW}
+LDAP admin DN			: ${LDAP_ADMIN_DN}
+LDAP admin PW			: ${LDAP_ADMIN_PW}
+==============================================================================
+EOF
+
+
+echo ""
+echo "=== Initial setup ==="
+echo ""
+printf "Setting host FQDN to %s ... " "${TEST_HOST_FQDN}"
+echo "127.0.0.1 ${TEST_HOST_FQDN} ${TEST_HOST}" >> /etc/hosts || die
+if ! hostnamectl hostname "${TEST_HOST_FQDN}"; then
+	if ! echo "${TEST_HOST_FQDN}" >> /etc/hostname; then
+		echo "FAILED (but continuing anyway)"
+	else
+		echo "OK"
+	fi
+else
+	echo "OK"
+fi
+
+
+printf "Reconfiguring slapd ... "
+if ! debconf-set-selections <<EOF
+slapd slapd/password1 password ${LDAP_ADMIN_PW}
+slapd slapd/password2 password ${LDAP_ADMIN_PW}
+slapd slapd/domain string ${DOMAIN}
+slapd shared/organization string FooBarCorp
+EOF
+then
+	die
+fi
+dpkg-reconfigure slapd > /dev/null 2>&1 || die
+echo "OK"
+
+
+printf "Verifying LDAP base DN ... "
+CFG_DOMAIN="$(ldapsearch -x -LLL -s base -b "" namingContexts | grep namingContexts | cut -d" " -f2)"
+if [ "${CFG_DOMAIN}" != "${LDAP_BASE_DN}" ]; then
+	printf "%s != %s ... " "${CFG_DOMAIN}" "${LDAP_BASE_DN}"
+	die
+fi
+echo "${CFG_DOMAIN} ... OK"
+
+
+printf "Enabling LDAP logging ... "
+if ! ldapmodify -Q -H ldapi:/// -Y EXTERNAL > /dev/null <<EOF
+dn: cn=config
+changetype: modify
+replace: olcLogLevel
+olcLogLevel: stats
+EOF
+then
+	die
+fi
+echo "OK"
+
+
+printf "Adding Kerberos schema to LDAP ... "
+zcat /usr/share/doc/krb5-kdc-ldap/kerberos.openldap.ldif.gz | \
+	ldapadd -Q -Y EXTERNAL -H ldapi:/// > /dev/null || die
+echo "OK"
+
+
+printf "Creating basic Kerberos LDAP structure ... "
+if ! ldapadd -x -D "${LDAP_ADMIN_DN}" -w "${LDAP_ADMIN_PW}" > /dev/null <<EOF
+dn: ${LDAP_SERVICES_DN}
+objectClass: organizationalUnit
+ou: Services
+
+dn: ${LDAP_KRB_DN}
+objectClass: organizationalUnit
+ou: kerberos
+
+dn: ${LDAP_KDC_DN}
+uid: kdc
+objectClass: account
+objectClass: simpleSecurityObject
+userPassword: {CRYPT}x
+description: Kerberos KDC Account
+
+dn: ${LDAP_KADMIN_DN}
+uid: kadmin
+objectClass: account
+objectClass: simpleSecurityObject
+userPassword: {CRYPT}x
+description: Kerberos Admin Server Account
+EOF
+then
+	die
+fi
+echo "OK"
+
+
+printf "Setting LDAP password for KDC ... "
+ldappasswd -x -D "${LDAP_ADMIN_DN}" -w "${LDAP_ADMIN_PW}" \
+	-s "${LDAP_KDC_PW}" "${LDAP_KDC_DN}" || die
+echo "OK"
+
+
+printf "Setting LDAP password for kadmin ... "
+ldappasswd -x -D "${LDAP_ADMIN_DN}" -w "${LDAP_ADMIN_PW}" \
+	-s "${LDAP_KADMIN_PW}" "${LDAP_KADMIN_DN}" || die
+echo "OK"
+
+
+printf "Setting LDAP ACLs for KDC and kadmin ... "
+if ! ldapmodify -Q -Y EXTERNAL -H ldapi:/// > /dev/null <<EOF
+dn: olcDatabase={1}mdb,cn=config
+add: olcAccess
+olcAccess: {0}to attrs=krbPrincipalKey
+  by anonymous auth
+  by dn.exact="${LDAP_KDC_DN}" read
+  by dn.exact="${LDAP_KADMIN_DN}" write
+  by self write
+  by * none
+-
+add: olcAccess
+olcAccess: {1}to dn.subtree="${LDAP_KRB_CONTAINER_DN}"
+  by dn.exact="${LDAP_KDC_DN}" read
+  by dn.exact="${LDAP_KADMIN_DN}" write
+  by * none
+EOF
+then
+	die
+fi
+echo "OK"
+
+
+printf "Writing /etc/krb5.conf ... "
+if ! cat <<EOF > /etc/krb5.conf
+[libdefaults]
+        default_realm = ${KERBEROS_REALM}
+        dns_lookup_realm = false
+        dns_lookup_kdc = false
+        ticket_lifetime = 24h
+        forwardable = true
+        proxiable = true
+        rdns = false
+
+[realms]
+        ${KERBEROS_REALM} = {
+                kdc = ${TEST_HOST_FQDN}
+                admin_server = ${TEST_HOST_FQDN}
+                default_domain = ${DOMAIN}
+        }
+EOF
+then
+	die
+fi
+echo "OK"
+
+
+printf "Writing /etc/krb5kdc/kdc.conf ... "
+if ! cat <<EOF > /etc/krb5kdc/kdc.conf
+[realms]
+        ${KERBEROS_REALM} = {
+                database_module = openldap_ldapconf
+        }
+
+[dbmodules]
+        openldap_ldapconf = {
+                db_library = kldap
+
+                ldap_kerberos_container_dn = ${LDAP_KRB_CONTAINER_DN}
+
+                # if either of these is false, then the ldap_kdc_dn needs to
+                # have write access as explained above
+                disable_last_success = true
+                disable_lockout = true
+                ldap_conns_per_server = 5
+                ldap_servers = ldapi:///
+
+                # this object needs to have read rights on
+                # the realm container, principal container and realm sub-trees
+                ldap_kdc_dn = "${LDAP_KDC_DN}"
+
+                # this object needs to have read and write rights on
+                # the realm container, principal container and realm sub-trees
+                ldap_kadmind_dn = "${LDAP_KADMIN_DN}"
+
+                # this file will be used to store plaintext passwords used
+                # to connect to the LDAP server
+                ldap_service_password_file = /etc/krb5kdc/service.keyfile
+
+                # OR, comment out ldap_kdc_dn, ldap_kadmind_dn and
+                # ldap_service_password_file above and enable the following
+                # two lines, if you skipped the step of creating entries/users
+                # for the Kerberos servers
+
+                #ldap_kdc_sasl_mech = EXTERNAL
+                #ldap_kadmind_sasl_mech = EXTERNAL
+                #ldap_servers = ldapi:///
+        }
+EOF
+then
+	die
+fi
+echo "OK"
+
+
+printf "Writing /etc/krb5kdc/kadm5.acl ... "
+if ! cat <<EOF > /etc/krb5kdc/kadm5.acl
+*/admin@${KERBEROS_REALM}        *
+EOF
+then
+	die
+fi
+echo "OK"
+
+
+# This will create two new entries in the LDAP DIT:
+#   ${LDAP_KRB_CONTAINER_DN}
+#   cn=${KERBEROS_REALM},${LDAP_KRB_CONTAINER_DN}
+# e.g.:
+#   cn=krbContainer,ou=kerberos,ou=Services,dc=example,dc=com
+#   cn=EXAMPLE.COM,cn=krbContainer,ou=kerberos,ou=Services,dc=example,dc=com
+printf "Creating Kerberos realm %s ... " "${KERBEROS_REALM}"
+kdb5_ldap_util -D "${LDAP_ADMIN_DN}" -w "${LDAP_ADMIN_PW}" -P kdcmasterpw \
+	create -subtrees "${LDAP_BASE_DN}" -r "${KERBEROS_REALM}" -s -H ldapi:/// \
+	> /dev/null || die
+echo "OK"
+
+
+printf "Stashing KDC password ... "
+printf "%s\n%s\n" "${LDAP_KDC_PW}" "${LDAP_KDC_PW}" | kdb5_ldap_util \
+	-D "${LDAP_ADMIN_DN}" -w "${LDAP_ADMIN_PW}" \
+	stashsrvpw -f /etc/krb5kdc/service.keyfile \
+	"${LDAP_KDC_DN}" \
+	> /dev/null || die
+echo "OK"
+
+
+printf "Stashing kadmin password ... "
+printf "%s\n%s\n" "${LDAP_KADMIN_PW}" "${LDAP_KADMIN_PW}" | kdb5_ldap_util \
+	-D "${LDAP_ADMIN_DN}" -w "${LDAP_ADMIN_PW}" \
+	stashsrvpw -f /etc/krb5kdc/service.keyfile \
+	"${LDAP_KADMIN_DN}" \
+	> /dev/null || die
+echo "OK"
+
+
+printf "Restarting KDC ... "
+invoke-rc.d krb5-kdc restart || die
+echo "OK"
+
+
+printf "Restarting kadmind ... "
+invoke-rc.d krb5-admin-server restart || die
+echo "OK"
+
+
+printf "Creating default Kerberos password policy ... "
+kadmin.local -q "addpol -minlength 1 defaultpol" > /dev/null || die
+echo "OK"
+
+
+printf "Creating test user principals ... "
+kadmin.local -q "addprinc -randkey -policy defaultpol alice" > /dev/null || die
+kadmin.local -q "ktadd -k krb5.alice.keytab alice" > /dev/null || die
+kadmin.local -q "addprinc -randkey -policy defaultpol mallory" > /dev/null || die
+kadmin.local -q "ktadd -k krb5.mallory.keytab mallory" > /dev/null || die
+echo "OK"
+
+
+printf "Creating LDAP server principal ... "
+kadmin.local -q "addprinc -randkey -policy defaultpol ldap/${TEST_HOST_FQDN}" > /dev/null || die
+kadmin.local -q "ktadd -k /etc/krb5.ldap.keytab ldap/${TEST_HOST_FQDN}" > /dev/null || die
+chown root:openldap /etc/krb5.ldap.keytab || die
+chmod 0640 /etc/krb5.ldap.keytab || die
+sed -i '/KRB5_KTNAME=/d' /etc/default/slapd || die
+# sysv init
+echo "export KRB5_KTNAME=/etc/krb5.ldap.keytab" >> /etc/default/slapd
+# systemd
+echo "KRB5_KTNAME=/etc/krb5.ldap.keytab" >> /etc/default/slapd
+echo "OK"
+
+
+printf "Updating apparmor profile for slapd ... "
+if [ -e /etc/apparmor.d/usr.sbin.slapd ]; then
+	mkdir -p /etc/apparmor.d/local
+	echo "/etc/krb5.ldap.keytab kr," >> /etc/apparmor.d/local/usr.sbin.slapd
+	apparmor_parser -r /etc/apparmor.d/usr.sbin.slapd
+fi
+echo "OK"
+
+
+printf "Restarting slapd ... "
+invoke-rc.d slapd restart || die
+echo "OK"
+
+
+printf "Creating HTTP server principal ... "
+kadmin.local -q "addprinc -randkey -policy defaultpol HTTP/${TEST_HOST_FQDN}" > /dev/null || die
+kadmin.local -q "modprinc +ok_as_delegate HTTP/${TEST_HOST_FQDN}" > /dev/null || die
+kadmin.local -q "modprinc +ok_to_auth_as_delegate HTTP/${TEST_HOST_FQDN}" > /dev/null || die
+kadmin.local -q "ktadd -k /etc/krb5.http.keytab HTTP/${TEST_HOST_FQDN}" > /dev/null || die
+chown root:www-data /etc/krb5.http.keytab || die
+chmod 0640 /etc/krb5.http.keytab || die
+echo "OK"
+
+
+printf "Setting delegation permissions via LDAP ... "
+if ! ldapmodify -x -D "${LDAP_ADMIN_DN}" -w "${LDAP_ADMIN_PW}" > /dev/null <<EOF
+dn: krbPrincipalName=HTTP/${TEST_HOST_FQDN}@${KERBEROS_REALM},cn=${KERBEROS_REALM},${LDAP_KRB_CONTAINER_DN}
+changetype: modify
+replace: krbAllowedToDelegateTo
+krbAllowedToDelegateTo: ldap/${TEST_HOST_FQDN}@${KERBEROS_REALM}
+EOF
+then
+	die
+fi
+echo "OK"
+
+
+printf "Creating nginx test site ... "
+if ! cat <<EOF > /etc/nginx/sites-available/kerberos
+# SPNEGO/Kerberos server test configuration
+#
+server {
+	listen 8080;
+	listen [::]:8080;
+
+	root /var/www/kerberos;
+
+	index index.php;
+
+	server_name ${TEST_HOST_FQDN};
+
+	location /noauth.php {
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+		auth_gss off;
+	}
+
+	location /auth.php {
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+                auth_gss on;
+                auth_gss_realm ${KERBEROS_REALM};
+                auth_gss_keytab /etc/krb5.http.keytab;
+                auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+                auth_gss_allow_basic_fallback off;
+                auth_gss_authorized_principal alice@${KERBEROS_REALM};
+                auth_gss_format_full on;
+                fastcgi_param HTTP_AUTHORIZATION "";
+                fastcgi_param KRB5CCNAME \$krb5_cc_name;
+                auth_gss_service_ccache /tmp/krb5cc_nginx;
+	}
+
+	location /delegate.php {
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+                auth_gss on;
+                auth_gss_realm ${KERBEROS_REALM};
+                auth_gss_keytab /etc/krb5.http.keytab;
+                auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+                auth_gss_allow_basic_fallback off;
+                auth_gss_authorized_principal alice@${KERBEROS_REALM};
+                auth_gss_format_full on;
+                fastcgi_param HTTP_AUTHORIZATION "";
+                fastcgi_param KRB5CCNAME \$krb5_cc_name;
+                auth_gss_service_ccache /tmp/krb5cc_nginx;
+                auth_gss_delegate_credentials on;
+                auth_gss_constrained_delegation on;
+	}
+}
+EOF
+then
+	die
+fi
+ln -s /etc/nginx/sites-available/kerberos /etc/nginx/sites-enabled/ || die
+mkdir -p /var/www/kerberos || die
+echo "OK"
+
+
+printf "Writing noauth.php ... "
+if ! cat <<'EOF' > /var/www/kerberos/noauth.php
+<?php
+	echo("No authentication");
+?>
+EOF
+then
+	die
+fi
+echo "OK"
+
+
+printf "Writing auth.php ... "
+if ! cat <<'EOF' > /var/www/kerberos/auth.php
+<?php
+	if (!isset($_SERVER["REMOTE_USER"]) || $_SERVER["REMOTE_USER"] == "") {
+		http_response_code(500);
+		echo("REMOTE_USER not set");
+		exit();
+	}
+	echo("Authenticated as " . $_SERVER["REMOTE_USER"]);
+?>
+EOF
+then
+	die
+fi
+echo "OK"
+
+
+printf "Writing delegate.php ... "
+if ! cat <<EOF > /var/www/kerberos/delegate.php
+<?php
+	if (!isset(\$_SERVER["REMOTE_USER"]) || \$_SERVER["REMOTE_USER"] == "") {
+		http_response_code(500);
+		echo("REMOTE_USER not set");
+		exit();
+	}
+
+	if (!isset(\$_SERVER["KRB5CCNAME"]) || \$_SERVER["KRB5CCNAME"] == "") {
+		http_response_code(500);
+		echo("KRB5CCNAME not set");
+		exit();
+	}
+
+	putenv("KRB5CCNAME=" . \$_SERVER['KRB5CCNAME']);
+
+	\$conn = ldap_connect("ldap://${TEST_HOST_FQDN}/");
+	if (!\$conn) {
+		http_response_code(500);
+		echo("ldap_connect() failed");
+		exit();
+	}
+
+	if (!ldap_set_option(\$conn, LDAP_OPT_PROTOCOL_VERSION, 3)) {
+		http_response_code(500);
+		echo("ldap_set_option() failed");
+		exit();
+	}
+
+	\$r = ldap_sasl_bind(\$conn);
+	if (!\$r) {
+		http_response_code(500);
+		echo("ldap_sasl_bind() failed: " . ldap_error(\$conn));
+		if (ldap_get_option(\$conn, LDAP_OPT_DIAGNOSTIC_MESSAGE, \$ext_err)) {
+			echo(" (" . \$ext_err . ")");
+		}
+		exit();
+	}
+
+	\$who = ldap_exop_whoami(\$conn);
+	if (!\$who) {
+		http_response_code(500);
+		echo("ldap_exop_whoami() failed");
+		exit();
+	}
+
+	echo(\$who);
+?>
+EOF
+then
+	die
+fi
+echo "OK"
+
+
+# For example, if php-fpm was already running when libsasl2-modules-gssapi-mit
+# was installed, it won't pick up the new GSSAPI capabilities until it has been
+# restarted...so let's restart all services that might use SASL/GSSAPI in our
+# tests.
+printf "Restarting nginx and PHP-FPM ... "
+systemctl restart nginx
+systemctl restart "php*-fpm.service"
+sleep 5
+echo "OK"
+
+
+echo ""
+echo "=== Setup complete, start tests ==="
+echo ""
+
+test_path()
+{
+	SUBURL="$1"
+	EXPECT1="$2"
+	EXPECT2="$3"
+
+	printf "curl %s, no negotiate: http status (expect %s)=" "${SUBURL}" "${EXPECT1}"
+	rm -f "${CURL_OUTPUT}"
+	CODE="$($CURL_NONEGOTIATE -w "%{http_code}" "http://${TEST_HOST_FQDN}:8080/${SUBURL}")" || true
+	printf "%s ... " "${CODE}"
+	if [ "$CODE" = "${EXPECT1}" ]; then
+		echo "OK"
+	else
+		EX=1
+		echo "FAILED"
+		if [ -e "${CURL_OUTPUT}" ]; then
+			echo "HTTP body:"
+			cat "${CURL_OUTPUT}"
+			echo ""
+		fi
+	fi
+
+	printf "curl %s, negotiate: http status (expect %s)=" "${SUBURL}" "${EXPECT2}"
+	rm -f "${CURL_OUTPUT}"
+	CODE="$($CURL_NEGOTIATE -w "%{http_code}" "http://${TEST_HOST_FQDN}:8080/${SUBURL}")" || true
+	printf "%s ... " "${CODE}"
+	if [ "$CODE" = "${EXPECT2}" ]; then
+		echo "OK"
+	else
+		EX=1
+		echo "FAILED"
+		if [ -e "${CURL_OUTPUT}" ]; then
+			echo "HTTP body:"
+			cat "${CURL_OUTPUT}"
+			echo ""
+		fi
+	fi
+}
+
+test_ldapwhoami()
+{
+	LDAP_EXPECTED="dn:uid=${1},cn=gss-spnego,cn=auth"
+
+	printf "Result of ldapwhoami via delegation ... "
+	if [ -e "${CURL_OUTPUT}" ]; then
+		LDAP_WHOAMI="$(cat "${CURL_OUTPUT}")"
+		if [ "${LDAP_WHOAMI}" != "${LDAP_EXPECTED}" ]; then
+			printf "%s != %s ... " "${LDAP_WHOAMI}" "${LDAP_EXPECTED}"
+			EX=1
+			echo "FAILED"
+		else
+			printf "%s ... " "${LDAP_WHOAMI}"
+			echo "OK"
+		fi
+	else
+		EX=1
+		echo "FAILED"
+	fi
+}
+
+
+printf "Destroying Kerberos tickets ... "
+kdestroy -q > /dev/null 2>&1 || true
+echo "OK"
+test_path "noauth.php" 200 200
+test_path "auth.php" 401 401
+test_path "delegate.php" 401 401
+
+
+echo ""
+printf "Obtaining Kerberos ticket for alice ... "
+if kinit -kt krb5.alice.keytab alice; then
+	echo "OK"
+else
+	EX=1
+	echo "FAILED"
+fi
+test_path "noauth.php" 200 200
+test_path "auth.php" 401 200
+test_path "delegate.php" 401 200
+test_ldapwhoami "alice"
+
+
+echo ""
+printf "Obtaining Kerberos ticket for mallory ... "
+kdestroy -q > /dev/null 2>&1 || true
+if kinit -kt krb5.mallory.keytab mallory; then
+	echo "OK"
+else
+	EX=1
+	echo "FAILED"
+fi
+test_path "noauth.php" 200 200
+test_path "auth.php" 401 403
+test_path "delegate.php" 401 403
+
+
+echo ""
+printf "Removing delegation permissions via LDAP ... "
+if ! ldapmodify -x -D "${LDAP_ADMIN_DN}" -w "${LDAP_ADMIN_PW}" > /dev/null <<EOF
+dn: krbPrincipalName=HTTP/${TEST_HOST_FQDN}@${KERBEROS_REALM},cn=${KERBEROS_REALM},${LDAP_KRB_CONTAINER_DN}
+changetype: modify
+delete: krbAllowedToDelegateTo
+EOF
+then
+	die
+fi
+echo "OK"
+
+
+echo ""
+printf "Destroying Kerberos tickets ... "
+kdestroy -q > /dev/null 2>&1 || true
+echo "OK"
+test_path "delegate.php" 401 401
+
+
+echo ""
+printf "Obtaining Kerberos ticket for alice ... "
+if kinit -kt krb5.alice.keytab alice; then
+	echo "OK"
+else
+	EX=1
+	echo "FAILED"
+fi
+test_path "delegate.php" 401 500
+
+
+echo ""
+printf "Obtaining Kerberos ticket for mallory ... "
+kdestroy -q > /dev/null 2>&1 || true
+if kinit -kt krb5.mallory.keytab mallory; then
+	echo "OK"
+else
+	EX=1
+	echo "FAILED"
+fi
+test_path "delegate.php" 401 403
+
+echo ""
+printf "Re-adding delegation permissions via LDAP ... "
+if ! ldapmodify -x -D "${LDAP_ADMIN_DN}" -w "${LDAP_ADMIN_PW}" > /dev/null <<EOF
+dn: krbPrincipalName=HTTP/${TEST_HOST_FQDN}@${KERBEROS_REALM},cn=${KERBEROS_REALM},${LDAP_KRB_CONTAINER_DN}
+changetype: modify
+replace: krbAllowedToDelegateTo
+krbAllowedToDelegateTo: ldap/${TEST_HOST_FQDN}@${KERBEROS_REALM}
+EOF
+then
+	die
+fi
+echo "OK"
+
+
+echo ""
+printf "Obtaining Kerberos ticket for alice ... "
+kdestroy -q > /dev/null 2>&1 || true
+if kinit -kt krb5.alice.keytab alice; then
+	echo "OK"
+else
+	EX=1
+	echo "FAILED"
+fi
+test_path "delegate.php" 401 200
+test_ldapwhoami "alice"
+
+
+echo ""
+if [ "${EX}" -ne 0 ]; then
+	echo "=== journalctl nginx ==="
+	journalctl -n all -xu nginx.service || true
+
+	echo "=== /etc/nginx/sites-available/kerberos ==="
+	cat /etc/nginx/sites-available/kerberos
+
+	echo "=== error.log ==="
+	cat /var/log/nginx/error.log
+
+	echo "=== access.log ==="
+	cat /var/log/nginx/access.log
+
+	echo "=== journalctl slapd ==="
+	journalctl -n all -xu slapd.service || true
+
+	echo "=== slapcat ==="
+	slapcat
+
+	echo "=== ldapwhoami ==="
+	ldapwhoami -Y GSSAPI -v -H "ldap://${TEST_HOST_FQDN}/"
+
+	echo "=== klist ==="
+	klist
+
+	echo "=== /etc/krb* ==="
+	ls -al /etc/krb*
+fi
+
+exit ${EX}

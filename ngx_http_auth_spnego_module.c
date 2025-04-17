@@ -383,22 +383,22 @@ static char *ngx_http_auth_spnego_merge_loc_conf(ngx_conf_t *cf, void *parent,
                              prev->constrained_delegation, 0);
 
 #if (NGX_DEBUG)
-    ngx_conf_log_error(NGX_LOG_INFO, cf, 0, "auth_spnego: protect = %i",
+    ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0, "auth_spnego: protect = %i",
                        conf->protect);
-    ngx_conf_log_error(NGX_LOG_INFO, cf, 0, "auth_spnego: realm@0x%p = %s",
+    ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0, "auth_spnego: realm@0x%p = %s",
                        conf->realm.data, conf->realm.data);
-    ngx_conf_log_error(NGX_LOG_INFO, cf, 0, "auth_spnego: keytab@0x%p = %s",
+    ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0, "auth_spnego: keytab@0x%p = %s",
                        conf->keytab.data, conf->keytab.data);
-    ngx_conf_log_error(NGX_LOG_INFO, cf, 0,
+    ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0,
                        "auth_spnego: service_ccache@0x%p = %s",
                        conf->service_ccache.data, conf->service_ccache.data);
-    ngx_conf_log_error(NGX_LOG_INFO, cf, 0, "auth_spnego: srvcname@0x%p = %s",
+    ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0, "auth_spnego: srvcname@0x%p = %s",
                        conf->srvcname.data, conf->srvcname.data);
-    ngx_conf_log_error(NGX_LOG_INFO, cf, 0, "auth_spnego: fqun = %i",
+    ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0, "auth_spnego: fqun = %i",
                        conf->fqun);
-    ngx_conf_log_error(NGX_LOG_INFO, cf, 0, "auth_spnego: allow_basic = %i",
+    ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0, "auth_spnego: allow_basic = %i",
                        conf->allow_basic);
-    ngx_conf_log_error(NGX_LOG_INFO, cf, 0, "auth_spnego: force_realm = %i",
+    ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0, "auth_spnego: force_realm = %i",
                        conf->force_realm);
 
     if (NGX_CONF_UNSET_PTR != conf->auth_princs) {
@@ -424,14 +424,14 @@ static char *ngx_http_auth_spnego_merge_loc_conf(ngx_conf_t *cf, void *parent,
     }
 #endif
 
-    ngx_conf_log_error(NGX_LOG_INFO, cf, 0, "auth_spnego: map_to_local = %i",
+    ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0, "auth_spnego: map_to_local = %i",
                        conf->map_to_local);
 
-    ngx_conf_log_error(NGX_LOG_INFO, cf, 0,
+    ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0,
                        "auth_spnego: delegate_credentials = %i",
                        conf->delegate_credentials);
 
-    ngx_conf_log_error(NGX_LOG_INFO, cf, 0,
+    ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0,
                        "auth_spnego: constrained_delegation = %i",
                        conf->constrained_delegation);
 #endif
@@ -813,6 +813,9 @@ ngx_http_auth_spnego_store_delegated_creds(ngx_http_request_t *r,
                           ngx_strlen("/") + ngx_strlen(escaped)) +
                          1;
     ccname = (char *)ngx_pcalloc(r->pool, ccname_size);
+    if (NULL == ccname) {
+        return NGX_ERROR;
+    }
 
     ngx_snprintf((u_char *)ccname, ccname_size, "FILE:%s/%*s", P_tmpdir,
                  ngx_strlen(escaped), escaped);
@@ -850,6 +853,10 @@ ngx_http_auth_spnego_store_delegated_creds(ngx_http_request_t *r,
     ngx_http_auth_spnego_set_variable(r, &var_name, &var_value);
 
     ngx_pool_cleanup_t *cln = ngx_pool_cleanup_add(r->pool, 0);
+    if (NULL == cln) {
+        return NGX_ERROR;
+    }
+
     cln->handler = ngx_http_auth_spnego_krb5_destroy_ccache;
     cln->data = ccname;
 done:
@@ -883,7 +890,6 @@ ngx_int_t ngx_http_auth_spnego_basic(ngx_http_request_t *r,
     krb5_principal server = NULL;
     krb5_creds creds;
     krb5_get_init_creds_opt *gic_options = NULL;
-    int kret = 0;
     char *name = NULL;
     unsigned char *p = NULL;
 
@@ -915,9 +921,9 @@ ngx_int_t ngx_http_auth_spnego_basic(ngx_http_request_t *r,
                      &host_name, &alcf->realm);
     }
 
-    kret = krb5_parse_name(kcontext, (const char *)service.data, &server);
+    code = krb5_parse_name(kcontext, (const char *)service.data, &server);
 
-    if (kret) {
+    if (code) {
         spnego_log_error("Kerberos error:  Unable to parse service name");
         spnego_log_krb5_error(kcontext, code);
         spnego_error(NGX_ERROR);
