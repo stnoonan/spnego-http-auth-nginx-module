@@ -1382,7 +1382,7 @@ static ngx_int_t ngx_http_auth_spnego_obtain_server_credentials(
     krb5_get_init_creds_opt_set_forwardable(&gicopts, 1);
 
     size_t tgs_principal_name_size =
-        (ngx_strlen(KRB5_TGS_NAME) + (krb5_realm_length(principal->realm) * 2) + 2) + 1;
+        (ngx_strlen(KRB5_TGS_NAME) + ((size_t)krb5_realm_length(principal->realm) * 2) + 2) + 1;
     tgs_principal_name = (char *)ngx_pcalloc(r->pool, tgs_principal_name_size);
 
     ngx_snprintf((u_char *)tgs_principal_name, tgs_principal_name_size,
