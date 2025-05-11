@@ -31,7 +31,7 @@ LDAP_KADMIN_DN="uid=kadmin,${LDAP_KRB_DN}"
 LDAP_KADMIN_PW="kadmintest"
 LDAP_ADMIN_DN="cn=admin,${LDAP_BASE_DN}"
 LDAP_ADMIN_PW="test"
-KRB_BOB_PW="bob123"
+KRB_BOB_PW="bob@BOB@123"
 KERBEROS_REALM="$(echo "${DOMAIN}" | tr "[:lower:]" "[:upper:]")"
 export LC_ALL=C
 export DEBIAN_FRONTEND=noninteractive
