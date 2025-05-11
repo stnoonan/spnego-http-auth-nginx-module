@@ -52,18 +52,18 @@ thing.
 * `auth_gss_service_name`: service principal name to use when acquiring
   credentials.
 
-If you would like to authorize only a specific set of users, you can use the
+If you would like to authorize only a specific set of principals, you can use the
 `auth_gss_authorized_principal` directive.  The configuration syntax supports
 multiple entries, one per line.
 
-    auth_gss_authorized_principal <username>@<realm>
-    auth_gss_authorized_principal <username2>@<realm>
+    auth_gss_authorized_principal <primary1>@<realm>
+    auth_gss_authorized_principal <primary2>@<realm>
 
-Users can also be authorized using a regex pattern via the `auth_gss_authorized_principal_regex`
- directive. This directive can be used together with the `auth_gss_authorized_principal` directive.
+Principals can also be authorized using a regex pattern via the `auth_gss_authorized_principal_regex`
+directive. This directive can be used together with the `auth_gss_authorized_principal` directive.
 
-    auth_gss_authorized_principal <username>@<realm>
-    auth_gss_authorized_principal_regex ^(<username>)/(<group>)@<realm>$
+    auth_gss_authorized_principal <primary1>@<realm>
+    auth_gss_authorized_principal_regex ^(<primary2>)/(<instance>)@<realm>$
 
 The remote user header in nginx can only be set by doing basic authentication.
 Thus, this module sets a bogus basic auth header that will reach your backend
@@ -71,7 +71,7 @@ application in order to set this header/nginx variable.  The easiest way to disa
 this behavior is to add the following configuration to your location config.
 
     proxy_set_header Authorization "";
-    
+
 A future version of the module may make this behavior an option, but this should
 be a sufficient workaround for now.
 
