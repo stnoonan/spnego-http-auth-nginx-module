@@ -31,6 +31,7 @@ LDAP_KADMIN_DN="uid=kadmin,${LDAP_KRB_DN}"
 LDAP_KADMIN_PW="kadmintest"
 LDAP_ADMIN_DN="cn=admin,${LDAP_BASE_DN}"
 LDAP_ADMIN_PW="test"
+KRB_BOB_PW="bob@BOB@123"
 KERBEROS_REALM="$(echo "${DOMAIN}" | tr "[:lower:]" "[:upper:]")"
 export LC_ALL=C
 export DEBIAN_FRONTEND=noninteractive
@@ -68,6 +69,7 @@ LDAP kadmin DN			: ${LDAP_KADMIN_DN}
 LDAP kadmin PW			: ${LDAP_KADMIN_PW}
 LDAP admin DN			: ${LDAP_ADMIN_DN}
 LDAP admin PW			: ${LDAP_ADMIN_PW}
+KRB bob PW			: ${KRB_BOB_PW}
 ==============================================================================
 EOF
 
@@ -326,6 +328,7 @@ echo "OK"
 printf "Creating test user principals ... "
 kadmin.local -q "addprinc -randkey -policy defaultpol alice" > /dev/null || die
 kadmin.local -q "ktadd -k krb5.alice.keytab alice" > /dev/null || die
+kadmin.local -q "addprinc -pw ${KRB_BOB_PW} -policy defaultpol bob" > /dev/null || die
 kadmin.local -q "addprinc -randkey -policy defaultpol mallory" > /dev/null || die
 kadmin.local -q "ktadd -k krb5.mallory.keytab mallory" > /dev/null || die
 echo "OK"
@@ -416,6 +419,21 @@ server {
                 auth_gss_service_ccache /tmp/krb5cc_nginx;
 	}
 
+	location /fallback.php {
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+                auth_gss on;
+                auth_gss_realm ${KERBEROS_REALM};
+                auth_gss_keytab /etc/krb5.http.keytab;
+                auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+                auth_gss_allow_basic_fallback on;
+                auth_gss_authorized_principal bob@${KERBEROS_REALM};
+                auth_gss_format_full on;
+                fastcgi_param HTTP_AUTHORIZATION "";
+                fastcgi_param KRB5CCNAME \$krb5_cc_name;
+                auth_gss_service_ccache /tmp/krb5cc_nginx;
+	}
+
 	location /delegate.php {
 		include snippets/fastcgi-php.conf;
 		fastcgi_pass unix:/run/php/php-fpm.sock;
@@ -456,6 +474,23 @@ echo "OK"
 
 printf "Writing auth.php ... "
 if ! cat <<'EOF' > /var/www/kerberos/auth.php
+<?php
+	if (!isset($_SERVER["REMOTE_USER"]) || $_SERVER["REMOTE_USER"] == "") {
+		http_response_code(500);
+		echo("REMOTE_USER not set");
+		exit();
+	}
+	echo("Authenticated as " . $_SERVER["REMOTE_USER"]);
+?>
+EOF
+then
+	die
+fi
+echo "OK"
+
+
+printf "Writing fallback.php ... "
+if ! cat <<'EOF' > /var/www/kerberos/fallback.php
 <?php
 	if (!isset($_SERVER["REMOTE_USER"]) || $_SERVER["REMOTE_USER"] == "") {
 		http_response_code(500);
@@ -581,6 +616,46 @@ test_path()
 	fi
 }
 
+test_basic()
+{
+	SUBURL="$1"
+	EXPECT1="$2"
+	EXPECT2="$3"
+
+	printf "curl %s, incorrect basic auth: http status (expect %s)=" "${SUBURL}" "${EXPECT1}"
+	rm -f "${CURL_OUTPUT}"
+	CODE="$($CURL_NONEGOTIATE -u "bob:InVaLiD" -w "%{http_code}" "http://${TEST_HOST_FQDN}:8080/${SUBURL}")" || true
+	printf "%s ... " "${CODE}"
+	if [ "$CODE" = "${EXPECT1}" ]; then
+		echo "OK"
+	else
+		EX=1
+		echo "FAILED"
+		if [ -e "${CURL_OUTPUT}" ]; then
+			echo "HTTP body:"
+			cat "${CURL_OUTPUT}"
+			echo ""
+		fi
+	fi
+
+	printf "curl %s, basic auth: http status (expect %s)=" "${SUBURL}" "${EXPECT2}"
+	rm -f "${CURL_OUTPUT}"
+	CODE="$($CURL_NONEGOTIATE -u "bob:${KRB_BOB_PW}" -w "%{http_code}" "http://${TEST_HOST_FQDN}:8080/${SUBURL}")" || true
+	printf "%s ... " "${CODE}"
+	if [ "$CODE" = "${EXPECT2}" ]; then
+		echo "OK"
+	else
+		EX=1
+		echo "FAILED"
+		if [ -e "${CURL_OUTPUT}" ]; then
+			echo "HTTP body:"
+			cat "${CURL_OUTPUT}"
+			echo ""
+		fi
+	fi
+
+}
+
 test_ldapwhoami()
 {
 	LDAP_EXPECTED="dn:uid=${1},cn=gss-spnego,cn=auth"
@@ -606,6 +681,8 @@ test_ldapwhoami()
 printf "Destroying Kerberos tickets ... "
 kdestroy -q > /dev/null 2>&1 || true
 echo "OK"
+test_basic "fallback.php" 401 200
+test_path "fallback.php" 401 401
 test_path "noauth.php" 200 200
 test_path "auth.php" 401 401
 test_path "delegate.php" 401 401
@@ -619,6 +696,8 @@ else
 	EX=1
 	echo "FAILED"
 fi
+test_basic "fallback.php" 401 200
+test_path "fallback.php" 401 403
 test_path "noauth.php" 200 200
 test_path "auth.php" 401 200
 test_path "delegate.php" 401 200
@@ -634,6 +713,24 @@ else
 	EX=1
 	echo "FAILED"
 fi
+test_basic "fallback.php" 401 200
+test_path "fallback.php" 401 403
+test_path "noauth.php" 200 200
+test_path "auth.php" 401 403
+test_path "delegate.php" 401 403
+
+
+echo ""
+printf "Obtaining Kerberos ticket for bob ... "
+kdestroy -q > /dev/null 2>&1 || true
+if echo "${KRB_BOB_PW}" | kinit bob > /dev/null 2>&1; then
+	echo "OK"
+else
+	EX=1
+	echo "FAILED"
+fi
+test_basic "fallback.php" 401 200
+test_path "fallback.php" 401 200
 test_path "noauth.php" 200 200
 test_path "auth.php" 401 403
 test_path "delegate.php" 401 403
