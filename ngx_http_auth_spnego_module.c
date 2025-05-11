@@ -1068,7 +1068,8 @@ ngx_int_t ngx_http_auth_spnego_basic(ngx_http_request_t *r,
 
     krb5_free_cred_contents(kcontext, &creds);
     /* Try to add the system realm to $remote_user if needed. */
-    if (alcf->fqun && !ngx_strchr(r->headers_in.user.data, '@')) {
+    if (alcf->fqun && !ngx_strlchr(r->headers_in.user.data,
+                                   r->headers_in.user.data + r->headers_in.user.len, '@')) {
 #ifdef krb5_princ_realm
         /*
          * MIT does not have krb5_principal_get_realm() but its
