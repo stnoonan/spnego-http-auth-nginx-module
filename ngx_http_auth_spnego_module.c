@@ -1227,9 +1227,11 @@ static krb5_error_code ngx_http_auth_spnego_verify_server_credentials(
         kerr = KRB5KRB_ERR_GENERIC;
         goto done;
     }
+    
+    size_t realm_len = krb5_realm_length(principal->realm);
+    size_t tgs_principal_name_size = 
+            (ngx_strlen(KRB5_TGS_NAME) + (realm_len * 2 ) + 2) + 1; 
 
-    size_t tgs_principal_name_size =
-        (ngx_strlen(KRB5_TGS_NAME) + (krb5_realm_length(principal->realm) * 2) + 2) + 1;
     tgs_principal_name = (char *)ngx_pcalloc(r->pool, tgs_principal_name_size);
     ngx_snprintf((u_char *)tgs_principal_name, tgs_principal_name_size,
                  "%s/%*s@%*s", KRB5_TGS_NAME, krb5_realm_length(principal->realm),
