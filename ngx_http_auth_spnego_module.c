@@ -1197,32 +1197,26 @@ static bool use_keytab(ngx_http_request_t *r, ngx_str_t *keytab) {
 
 static char *
 ngx_http_auth_spnego_build_tgs_principal(ngx_pool_t *pool,
-                                         char      *realm_data,
-                                         size_t       realm_len)
+					 krb5_principal principal)
 {
-    u_char *u_realm = (u_char *) realm_data;
-    /* "krbtgt" + '/' + '@' + 2×REALM + '\0' */
-    size_t  name_len = ngx_strlen(KRB5_TGS_NAME)
-                     + 1         /* '/' */
-                     + realm_len /* REALM */
-                     + 1         /* '@' */
-                     + realm_len /* REALM */
-                     + 1;        /* '\0' */
-
-    char   *name = ngx_pcalloc(pool, name_len);
-    if (name == NULL) {
+    if (!principal)
         return NULL;
-    }
 
-    u_char *p = (u_char *) name;
+    u_char *realm = (u_char *)krb5_realm_data(principal->realm);
+    size_t realm_len = krb5_realm_length(principal->realm);
+    size_t name_len = ngx_strlen(KRB5_TGS_NAME)
+                      + 1         /* '/' */
+                      + realm_len /* REALM */
+                      + 1         /* '@' */
+                      + realm_len /* REALM */
+                      + 1;        /* '\0' */
 
-    p = ngx_cpymem(p, KRB5_TGS_NAME, ngx_strlen(KRB5_TGS_NAME));
-    *p++ = '/';
-    p = ngx_cpymem(p, u_realm, realm_len);
-    *p++ = '@';
-    p = ngx_cpymem(p, u_realm, realm_len);
-    *p   = '\0';
+    char *name = ngx_pcalloc(pool, name_len);
+    if (!name)
+        return NULL;
 
+    ngx_snprintf((u_char *)name, name_len, "%s/%*s@%*s", KRB5_TGS_NAME,
+                 realm_len, realm, realm_len, realm);
     return name;
 }
 
@@ -1260,12 +1254,10 @@ static krb5_error_code ngx_http_auth_spnego_verify_server_credentials(
         goto done;
     }
 
-    size_t realm_len = krb5_realm_length(principal->realm);
-    tgs_principal_name = ngx_http_auth_spnego_build_tgs_principal(
-                            r->pool,
-                            krb5_realm_data(principal->realm),
-                            realm_len);
-    if (tgs_principal_name == NULL) {
+    tgs_principal_name = ngx_http_auth_spnego_build_tgs_principal(r->pool,
+								  principal);
+    if (!tgs_principal_name) {
+        spnego_log_error("ngx_http_auth_spnego_build_tgs_principal() failed");
         kerr = ENOMEM;
         goto done;
     }
@@ -1305,6 +1297,8 @@ static krb5_error_code ngx_http_auth_spnego_verify_server_credentials(
 done:
     if (principal)
         krb5_free_principal(kcontext, principal);
+    if (tgs_principal_name)
+        ngx_pfree(r->pool, tgs_principal_name);
     if (match_creds.server)
         krb5_free_principal(kcontext, match_creds.server);
     if (creds.client)
@@ -1417,12 +1411,10 @@ static ngx_int_t ngx_http_auth_spnego_obtain_server_credentials(
 #endif
     krb5_get_init_creds_opt_set_forwardable(&gicopts, 1);
 
-    size_t realm_len = krb5_realm_length(principal->realm);
-    tgs_principal_name = ngx_http_auth_spnego_build_tgs_principal(
-                            r->pool,
-                            krb5_realm_data(principal->realm),
-                            realm_len);
-    if (tgs_principal_name == NULL) {
+    tgs_principal_name = ngx_http_auth_spnego_build_tgs_principal(r->pool,
+								  principal);
+    if (!tgs_principal_name) {
+        spnego_log_error("ngx_http_auth_spnego_build_tgs_principal() failed");
         kerr = ENOMEM;
         goto unlock;
     }
