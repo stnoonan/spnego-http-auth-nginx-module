@@ -324,7 +324,7 @@ static ngx_int_t ngx_http_auth_spnego_init_shm_zone(ngx_shm_zone_t *shm_zone,
     return NGX_OK;
 }
 
-static ngx_int_t ngx_http_auth_spnego_create_shm_zone(ngx_conf_t *cf, 
+static ngx_int_t ngx_http_auth_spnego_create_shm_zone(ngx_conf_t *cf,
                                                       ngx_str_t *name) {
     if (shm_zone != NULL) return NGX_OK;
 
@@ -1199,7 +1199,7 @@ static char *
 ngx_http_auth_spnego_build_tgs_principal(ngx_pool_t *pool,
                                          char      *realm_data,
                                          size_t       realm_len)
-{   
+{
     u_char *u_realm = (u_char *) realm_data;
     /* "krbtgt" + '/' + '@' + 2×REALM + '\0' */
     size_t  name_len = ngx_strlen(KRB5_TGS_NAME)
@@ -1259,7 +1259,7 @@ static krb5_error_code ngx_http_auth_spnego_verify_server_credentials(
         kerr = KRB5KRB_ERR_GENERIC;
         goto done;
     }
-    
+
     size_t realm_len = krb5_realm_length(principal->realm);
     tgs_principal_name = ngx_http_auth_spnego_build_tgs_principal(
                             r->pool,
