@@ -1194,6 +1194,38 @@ static bool use_keytab(ngx_http_request_t *r, ngx_str_t *keytab) {
     return true;
 }
 
+
+static char *
+ngx_http_auth_spnego_build_tgs_principal(ngx_pool_t *pool,
+                                         char      *realm_data,
+                                         size_t       realm_len)
+{   
+    u_char *u_realm = (u_char *) realm_data;
+    /* "krbtgt" + '/' + '@' + 2×REALM + '\0' */
+    size_t  name_len = ngx_strlen(KRB5_TGS_NAME)
+                     + 1         /* '/' */
+                     + realm_len /* REALM */
+                     + 1         /* '@' */
+                     + realm_len /* REALM */
+                     + 1;        /* '\0' */
+
+    char   *name = ngx_pcalloc(pool, name_len);
+    if (name == NULL) {
+        return NULL;
+    }
+
+    u_char *p = (u_char *) name;
+
+    p = ngx_cpymem(p, KRB5_TGS_NAME, ngx_strlen(KRB5_TGS_NAME));
+    *p++ = '/';
+    p = ngx_cpymem(p, u_realm, realm_len);
+    *p++ = '@';
+    p = ngx_cpymem(p, u_realm, realm_len);
+    *p   = '\0';
+
+    return name;
+}
+
 static krb5_error_code ngx_http_auth_spnego_verify_server_credentials(
     ngx_http_request_t *r, krb5_context kcontext, ngx_str_t *principal_name,
     krb5_ccache ccache) {
@@ -1227,14 +1259,16 @@ static krb5_error_code ngx_http_auth_spnego_verify_server_credentials(
         kerr = KRB5KRB_ERR_GENERIC;
         goto done;
     }
-
-    size_t tgs_principal_name_size =
-        (ngx_strlen(KRB5_TGS_NAME) + (krb5_realm_length(principal->realm) * 2) + 2) + 1;
-    tgs_principal_name = (char *)ngx_pcalloc(r->pool, tgs_principal_name_size);
-    ngx_snprintf((u_char *)tgs_principal_name, tgs_principal_name_size,
-                 "%s/%*s@%*s", KRB5_TGS_NAME, krb5_realm_length(principal->realm),
-                 krb5_realm_data(principal->realm), krb5_realm_length(principal->realm),
-                 krb5_realm_data(principal->realm));
+    
+    size_t realm_len = krb5_realm_length(principal->realm);
+    tgs_principal_name = ngx_http_auth_spnego_build_tgs_principal(
+                            r->pool,
+                            krb5_realm_data(principal->realm),
+                            realm_len);
+    if (tgs_principal_name == NULL) {
+        kerr = ENOMEM;
+        goto done;
+    }
 
     if ((kerr = krb5_parse_name(kcontext, tgs_principal_name,
                                 &match_creds.server))) {
@@ -1383,14 +1417,15 @@ static ngx_int_t ngx_http_auth_spnego_obtain_server_credentials(
 #endif
     krb5_get_init_creds_opt_set_forwardable(&gicopts, 1);
 
-    size_t tgs_principal_name_size =
-        (ngx_strlen(KRB5_TGS_NAME) + ((size_t)krb5_realm_length(principal->realm) * 2) + 2) + 1;
-    tgs_principal_name = (char *)ngx_pcalloc(r->pool, tgs_principal_name_size);
-
-    ngx_snprintf((u_char *)tgs_principal_name, tgs_principal_name_size,
-                 "%s/%*s@%*s", KRB5_TGS_NAME, krb5_realm_length(principal->realm),
-                 krb5_realm_data(principal->realm), krb5_realm_length(principal->realm),
-                 krb5_realm_data(principal->realm));
+    size_t realm_len = krb5_realm_length(principal->realm);
+    tgs_principal_name = ngx_http_auth_spnego_build_tgs_principal(
+                            r->pool,
+                            krb5_realm_data(principal->realm),
+                            realm_len);
+    if (tgs_principal_name == NULL) {
+        kerr = ENOMEM;
+        goto unlock;
+    }
 
     kerr = krb5_get_init_creds_keytab(kcontext, &creds, principal, keytab, 0,
                                       tgs_principal_name, &gicopts);
