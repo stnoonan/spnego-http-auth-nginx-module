@@ -908,7 +908,7 @@ ngx_int_t ngx_http_auth_spnego_basic(ngx_http_request_t *r,
     krb5_principal client = NULL;
     krb5_principal server = NULL;
     krb5_creds creds;
-    krb5_get_init_creds_opt *gic_options = NULL;
+    krb5_get_init_creds_opt *options = NULL;
     char *name = NULL;
     unsigned char *p = NULL;
 
@@ -1062,12 +1062,16 @@ ngx_int_t ngx_http_auth_spnego_basic(ngx_http_request_t *r,
         spnego_error(NGX_ERROR);
     }
 
-    krb5_get_init_creds_opt_alloc(kcontext, &gic_options);
+    code = krb5_get_init_creds_opt_alloc(kcontext, &options);
+    if (code) {
+        spnego_log_error("Kerberos error: Cannot allocate options structure");
+	spnego_log_krb5_error(kcontext, code);
+        spnego_error(NGX_ERROR);
+    }
 
     code = krb5_get_init_creds_password(kcontext, &creds, client,
                                         (char *)r->headers_in.passwd.data, NULL,
-                                        NULL, 0, NULL, gic_options);
-
+                                        NULL, 0, NULL, options);
     if (code) {
         spnego_log_error("Kerberos error: Credentials failed");
         spnego_log_krb5_error(kcontext, code);
@@ -1124,8 +1128,8 @@ end:
         ngx_pfree(r->pool, service.data);
     if (user.data)
         ngx_pfree(r->pool, user.data);
-
-    krb5_get_init_creds_opt_free(kcontext, gic_options);
+    if (options)
+        krb5_get_init_creds_opt_free(kcontext, options);
 
     krb5_free_context(kcontext);
 
@@ -1325,13 +1329,8 @@ static ngx_int_t ngx_http_auth_spnego_obtain_server_credentials(
     krb5_ccache ccache = NULL;
     krb5_error_code kerr = 0;
     krb5_principal principal = NULL;
-    krb5_get_init_creds_opt gicopts;
+    krb5_get_init_creds_opt *options = NULL;
     krb5_creds creds;
-#ifdef HEIMDAL_DEPRECATED
-    // only used to call krb5_get_init_creds_opt_alloc() in newer heimdal
-    krb5_get_init_creds_opt *gicopts_l;
-#endif
-
     char *principal_name = NULL;
     char *tgs_principal_name = NULL;
     char kt_path[1024];
@@ -1413,13 +1412,13 @@ static ngx_int_t ngx_http_auth_spnego_obtain_server_credentials(
 
     spnego_debug1("Obtaining new credentials for %s", principal_name);
 
-#ifndef HEIMDAL_DEPRECATED
-    krb5_get_init_creds_opt_init(&gicopts);
-#else
-    gicopts_l = &gicopts;
-    krb5_get_init_creds_opt_alloc(kcontext, &gicopts_l);
-#endif
-    krb5_get_init_creds_opt_set_forwardable(&gicopts, 1);
+    if ((kerr = krb5_get_init_creds_opt_alloc(kcontext, &options))) {
+        spnego_log_error("Kerberos error: Cannot allocate options structure");
+        spnego_log_krb5_error(kcontext, kerr);
+        goto unlock;
+    }
+
+    krb5_get_init_creds_opt_set_forwardable(options, 1);
 
     tgs_principal_name = ngx_http_auth_spnego_build_tgs_principal(r->pool,
 								  principal);
@@ -1429,9 +1428,8 @@ static ngx_int_t ngx_http_auth_spnego_obtain_server_credentials(
         goto unlock;
     }
 
-    kerr = krb5_get_init_creds_keytab(kcontext, &creds, principal, keytab, 0,
-                                      tgs_principal_name, &gicopts);
-    if (kerr) {
+    if ((kerr = krb5_get_init_creds_keytab(kcontext, &creds, principal, keytab,
+					   0, tgs_principal_name, options))) {
         spnego_log_error(
             "Kerberos error: Cannot obtain credentials for principal %s",
             principal_name);
@@ -1459,6 +1457,8 @@ done:
         ngx_pfree(r->pool, tgs_principal_name);
     if (creds.client)
         krb5_free_cred_contents(kcontext, &creds);
+    if (options)
+        krb5_get_init_creds_opt_free(kcontext, options);
     if (keytab)
         krb5_kt_close(kcontext, keytab);
     if (ccache)
