@@ -68,6 +68,23 @@
 #define krb5_realm_data(r) ((r).data)
 #endif
 
+#ifdef krb5_princ_realm
+/*
+ * MIT does not have krb5_principal_get_realm() but its
+ * krb5_princ_realm() is a macro that effectively points
+ * to a char *.
+ */
+static const char *krb5_principal_get_realm(krb5_context ctx,
+                                            krb5_const_principal princ) {
+    const krb5_data *data;
+
+    data = krb5_princ_realm(ctx, princ);
+    if (!data || !data->data)
+        return NULL;
+    return data->data;
+}
+#endif
+
 /* Module handler */
 static ngx_int_t ngx_http_auth_spnego_handler(ngx_http_request_t *);
 
@@ -153,7 +170,7 @@ static ngx_command_t ngx_http_auth_spnego_commands[] = {
      NGX_HTTP_LOC_CONF_OFFSET,
      offsetof(ngx_http_auth_spnego_loc_conf_t, protect), NULL},
 
-    {ngx_string("auth_gss_zone_name"), NGX_HTTP_MAIN_CONF|NGX_CONF_TAKE1,
+    {ngx_string("auth_gss_zone_name"), NGX_HTTP_MAIN_CONF | NGX_CONF_TAKE1,
      ngx_conf_set_str_slot, NGX_HTTP_LOC_CONF_OFFSET,
      offsetof(ngx_http_auth_spnego_loc_conf_t, shm_zone_name), NULL},
 
@@ -326,7 +343,8 @@ static ngx_int_t ngx_http_auth_spnego_init_shm_zone(ngx_shm_zone_t *shm_zone,
 
 static ngx_int_t ngx_http_auth_spnego_create_shm_zone(ngx_conf_t *cf,
                                                       ngx_str_t *name) {
-    if (shm_zone != NULL) return NGX_OK;
+    if (shm_zone != NULL)
+        return NGX_OK;
 
     shm_zone =
         ngx_shared_memory_add(cf, name, 65536, &ngx_http_auth_spnego_module);
@@ -346,11 +364,14 @@ static char *ngx_http_auth_spnego_merge_loc_conf(ngx_conf_t *cf, void *parent,
 
     /* "off" by default */
     ngx_conf_merge_off_value(conf->protect, prev->protect, 0);
-    ngx_conf_merge_str_value(conf->shm_zone_name, prev->shm_zone_name, SHM_ZONE_NAME);
+    ngx_conf_merge_str_value(conf->shm_zone_name, prev->shm_zone_name,
+                             SHM_ZONE_NAME);
 
     if (conf->protect != 0) {
-        if (ngx_http_auth_spnego_create_shm_zone(cf, &conf->shm_zone_name) != NGX_OK) {
-            ngx_conf_log_error(NGX_LOG_INFO, cf, 0,
+        if (ngx_http_auth_spnego_create_shm_zone(cf, &conf->shm_zone_name) !=
+            NGX_OK) {
+            ngx_conf_log_error(
+                NGX_LOG_INFO, cf, 0,
                 "auth_spnego: failed to create shared memory zone");
             return NGX_CONF_ERROR;
         }
@@ -479,7 +500,6 @@ static ngx_int_t ngx_http_auth_spnego_add_variable(ngx_conf_t *cf,
 
     return NGX_OK;
 }
-
 
 static ngx_int_t ngx_http_auth_spnego_init(ngx_conf_t *cf) {
     ngx_http_handler_pt *h;
@@ -889,7 +909,7 @@ ngx_int_t ngx_http_auth_spnego_basic(ngx_http_request_t *r,
     krb5_principal client = NULL;
     krb5_principal server = NULL;
     krb5_creds creds;
-    krb5_get_init_creds_opt *gic_options = NULL;
+    krb5_get_init_creds_opt *options = NULL;
     char *name = NULL;
     unsigned char *p = NULL;
 
@@ -1043,12 +1063,16 @@ ngx_int_t ngx_http_auth_spnego_basic(ngx_http_request_t *r,
         spnego_error(NGX_ERROR);
     }
 
-    krb5_get_init_creds_opt_alloc(kcontext, &gic_options);
+    code = krb5_get_init_creds_opt_alloc(kcontext, &options);
+    if (code) {
+        spnego_log_error("Kerberos error: Cannot allocate options structure");
+        spnego_log_krb5_error(kcontext, code);
+        spnego_error(NGX_ERROR);
+    }
 
     code = krb5_get_init_creds_password(kcontext, &creds, client,
                                         (char *)r->headers_in.passwd.data, NULL,
-                                        NULL, 0, NULL, gic_options);
-
+                                        NULL, 0, NULL, options);
     if (code) {
         spnego_log_error("Kerberos error: Credentials failed");
         spnego_log_krb5_error(kcontext, code);
@@ -1068,18 +1092,10 @@ ngx_int_t ngx_http_auth_spnego_basic(ngx_http_request_t *r,
 
     krb5_free_cred_contents(kcontext, &creds);
     /* Try to add the system realm to $remote_user if needed. */
-    if (alcf->fqun && !ngx_strlchr(r->headers_in.user.data,
-                                   r->headers_in.user.data + r->headers_in.user.len, '@')) {
-#ifdef krb5_princ_realm
-        /*
-         * MIT does not have krb5_principal_get_realm() but its
-         * krb5_princ_realm() is a macro that effectively points
-         * to a char *.
-         */
-        const char *realm = krb5_princ_realm(kcontext, client)->data;
-#else
+    if (alcf->fqun &&
+        !ngx_strlchr(r->headers_in.user.data,
+                     r->headers_in.user.data + r->headers_in.user.len, '@')) {
         const char *realm = krb5_principal_get_realm(kcontext, client);
-#endif
         if (realm) {
             new_user.len = r->headers_in.user.len + 1 + ngx_strlen(realm);
             new_user.data = ngx_palloc(r->pool, new_user.len);
@@ -1114,8 +1130,8 @@ end:
         ngx_pfree(r->pool, service.data);
     if (user.data)
         ngx_pfree(r->pool, user.data);
-
-    krb5_get_init_creds_opt_free(kcontext, gic_options);
+    if (options)
+        krb5_get_init_creds_opt_free(kcontext, options);
 
     krb5_free_context(kcontext);
 
@@ -1194,35 +1210,26 @@ static bool use_keytab(ngx_http_request_t *r, ngx_str_t *keytab) {
     return true;
 }
 
-
 static char *
 ngx_http_auth_spnego_build_tgs_principal(ngx_pool_t *pool,
-                                         char      *realm_data,
-                                         size_t       realm_len)
-{
-    u_char *u_realm = (u_char *) realm_data;
-    /* "krbtgt" + '/' + '@' + 2×REALM + '\0' */
-    size_t  name_len = ngx_strlen(KRB5_TGS_NAME)
-                     + 1         /* '/' */
-                     + realm_len /* REALM */
-                     + 1         /* '@' */
-                     + realm_len /* REALM */
-                     + 1;        /* '\0' */
-
-    char   *name = ngx_pcalloc(pool, name_len);
-    if (name == NULL) {
+                                         krb5_principal principal) {
+    if (!principal)
         return NULL;
-    }
 
-    u_char *p = (u_char *) name;
+    u_char *realm = (u_char *)krb5_realm_data(principal->realm);
+    size_t realm_len = krb5_realm_length(principal->realm);
+    size_t name_len = ngx_strlen(KRB5_TGS_NAME) + 1 /* '/' */
+                      + realm_len                   /* REALM */
+                      + 1                           /* '@' */
+                      + realm_len                   /* REALM */
+                      + 1;                          /* '\0' */
 
-    p = ngx_cpymem(p, KRB5_TGS_NAME, ngx_strlen(KRB5_TGS_NAME));
-    *p++ = '/';
-    p = ngx_cpymem(p, u_realm, realm_len);
-    *p++ = '@';
-    p = ngx_cpymem(p, u_realm, realm_len);
-    *p   = '\0';
+    char *name = ngx_pcalloc(pool, name_len);
+    if (!name)
+        return NULL;
 
+    ngx_snprintf((u_char *)name, name_len, "%s/%*s@%*s", KRB5_TGS_NAME,
+                 realm_len, realm, realm_len, realm);
     return name;
 }
 
@@ -1260,12 +1267,10 @@ static krb5_error_code ngx_http_auth_spnego_verify_server_credentials(
         goto done;
     }
 
-    size_t realm_len = krb5_realm_length(principal->realm);
-    tgs_principal_name = ngx_http_auth_spnego_build_tgs_principal(
-                            r->pool,
-                            krb5_realm_data(principal->realm),
-                            realm_len);
-    if (tgs_principal_name == NULL) {
+    tgs_principal_name =
+        ngx_http_auth_spnego_build_tgs_principal(r->pool, principal);
+    if (!tgs_principal_name) {
+        spnego_log_error("ngx_http_auth_spnego_build_tgs_principal() failed");
         kerr = ENOMEM;
         goto done;
     }
@@ -1305,6 +1310,8 @@ static krb5_error_code ngx_http_auth_spnego_verify_server_credentials(
 done:
     if (principal)
         krb5_free_principal(kcontext, principal);
+    if (tgs_principal_name)
+        ngx_pfree(r->pool, tgs_principal_name);
     if (match_creds.server)
         krb5_free_principal(kcontext, match_creds.server);
     if (creds.client)
@@ -1321,13 +1328,8 @@ static ngx_int_t ngx_http_auth_spnego_obtain_server_credentials(
     krb5_ccache ccache = NULL;
     krb5_error_code kerr = 0;
     krb5_principal principal = NULL;
-    krb5_get_init_creds_opt gicopts;
+    krb5_get_init_creds_opt *options = NULL;
     krb5_creds creds;
-#ifdef HEIMDAL_DEPRECATED
-    // only used to call krb5_get_init_creds_opt_alloc() in newer heimdal
-    krb5_get_init_creds_opt *gicopts_l;
-#endif
-
     char *principal_name = NULL;
     char *tgs_principal_name = NULL;
     char kt_path[1024];
@@ -1409,27 +1411,24 @@ static ngx_int_t ngx_http_auth_spnego_obtain_server_credentials(
 
     spnego_debug1("Obtaining new credentials for %s", principal_name);
 
-#ifndef HEIMDAL_DEPRECATED
-    krb5_get_init_creds_opt_init(&gicopts);
-#else
-    gicopts_l = &gicopts;
-    krb5_get_init_creds_opt_alloc(kcontext, &gicopts_l);
-#endif
-    krb5_get_init_creds_opt_set_forwardable(&gicopts, 1);
+    if ((kerr = krb5_get_init_creds_opt_alloc(kcontext, &options))) {
+        spnego_log_error("Kerberos error: Cannot allocate options structure");
+        spnego_log_krb5_error(kcontext, kerr);
+        goto unlock;
+    }
 
-    size_t realm_len = krb5_realm_length(principal->realm);
-    tgs_principal_name = ngx_http_auth_spnego_build_tgs_principal(
-                            r->pool,
-                            krb5_realm_data(principal->realm),
-                            realm_len);
-    if (tgs_principal_name == NULL) {
+    krb5_get_init_creds_opt_set_forwardable(options, 1);
+
+    tgs_principal_name =
+        ngx_http_auth_spnego_build_tgs_principal(r->pool, principal);
+    if (!tgs_principal_name) {
+        spnego_log_error("ngx_http_auth_spnego_build_tgs_principal() failed");
         kerr = ENOMEM;
         goto unlock;
     }
 
-    kerr = krb5_get_init_creds_keytab(kcontext, &creds, principal, keytab, 0,
-                                      tgs_principal_name, &gicopts);
-    if (kerr) {
+    if ((kerr = krb5_get_init_creds_keytab(kcontext, &creds, principal, keytab,
+                                           0, tgs_principal_name, options))) {
         spnego_log_error(
             "Kerberos error: Cannot obtain credentials for principal %s",
             principal_name);
@@ -1457,6 +1456,8 @@ done:
         ngx_pfree(r->pool, tgs_principal_name);
     if (creds.client)
         krb5_free_cred_contents(kcontext, &creds);
+    if (options)
+        krb5_get_init_creds_opt_free(kcontext, options);
     if (keytab)
         krb5_kt_close(kcontext, keytab);
     if (ccache)
