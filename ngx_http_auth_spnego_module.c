@@ -68,6 +68,25 @@
 #define krb5_realm_data(r) ((r).data)
 #endif
 
+#ifdef krb5_princ_realm
+/*
+ * MIT does not have krb5_principal_get_realm() but its
+ * krb5_princ_realm() is a macro that effectively points
+ * to a char *.
+ */
+static const char *
+krb5_principal_get_realm(krb5_context ctx, krb5_const_principal princ)
+{
+    const krb5_data *data;
+
+    data = krb5_princ_realm(ctx, princ);
+    if (!data || !data->data)
+        return NULL;
+    return data->data;
+}
+#endif
+
+
 /* Module handler */
 static ngx_int_t ngx_http_auth_spnego_handler(ngx_http_request_t *);
 
@@ -1070,16 +1089,7 @@ ngx_int_t ngx_http_auth_spnego_basic(ngx_http_request_t *r,
     /* Try to add the system realm to $remote_user if needed. */
     if (alcf->fqun && !ngx_strlchr(r->headers_in.user.data,
                                    r->headers_in.user.data + r->headers_in.user.len, '@')) {
-#ifdef krb5_princ_realm
-        /*
-         * MIT does not have krb5_principal_get_realm() but its
-         * krb5_princ_realm() is a macro that effectively points
-         * to a char *.
-         */
-        const char *realm = krb5_princ_realm(kcontext, client)->data;
-#else
         const char *realm = krb5_principal_get_realm(kcontext, client);
-#endif
         if (realm) {
             new_user.len = r->headers_in.user.len + 1 + ngx_strlen(realm);
             new_user.data = ngx_palloc(r->pool, new_user.len);
