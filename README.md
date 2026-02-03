@@ -5,6 +5,28 @@ This module implements adds [SPNEGO](http://tools.ietf.org/html/rfc4178)
 support to nginx(http://nginx.org).  It currently supports only Kerberos
 authentication via [GSSAPI](http://en.wikipedia.org/wiki/GSSAPI)
 
+Pre-built Packages (Ubuntu / Debian)
+------------------------------------
+
+Pre-built packages for this module are freely available from the GetPageSpeed repository:
+
+```bash
+# Install the repository keyring
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://extras.getpagespeed.com/deb-archive-keyring.gpg \
+  | sudo tee /etc/apt/keyrings/getpagespeed.gpg >/dev/null
+
+# Add the repository (Ubuntu example - replace 'ubuntu' and 'jammy' for your distro)
+echo "deb [signed-by=/etc/apt/keyrings/getpagespeed.gpg] https://extras.getpagespeed.com/ubuntu jammy main" \
+  | sudo tee /etc/apt/sources.list.d/getpagespeed-extras.list
+
+# Install nginx and the module
+sudo apt-get update
+sudo apt-get install nginx nginx-module-spnego-http-auth
+```
+
+The module is automatically enabled after installation. Supported distributions include Debian 12/13 and Ubuntu 20.04/22.04/24.04 (both amd64 and arm64). See [the complete setup instructions](https://apt-nginx-extras.getpagespeed.com/apt-setup/).
+
 Prerequisites
 -------------
 
@@ -80,12 +102,12 @@ specify the `auth_gss_map_to_local` option.
 Credential Delegation
 -----------------------------
 
-User credentials can be delegated to nginx using the `auth_gss_delegate_credentials` 
- directive. This directive will enable unconstrained delegation if the user chooses 
- to delegate their credentials. Constrained delegation (S4U2proxy) can also be enabled using the 
- `auth_gss_constrained_delegation` directive together with the `auth_gss_delegate_credentials` 
- directive. To specify the ccache file name to store the service ticket used for constrained 
- delegation, set the `auth_gss_service_ccache` directive. Otherwise, the default ccache name 
+User credentials can be delegated to nginx using the `auth_gss_delegate_credentials`
+ directive. This directive will enable unconstrained delegation if the user chooses
+ to delegate their credentials. Constrained delegation (S4U2proxy) can also be enabled using the
+ `auth_gss_constrained_delegation` directive together with the `auth_gss_delegate_credentials`
+ directive. To specify the ccache file name to store the service ticket used for constrained
+ delegation, set the `auth_gss_service_ccache` directive. Otherwise, the default ccache name
  will be used.
 
     auth_gss_service_ccache /tmp/krb5cc_0;
@@ -93,8 +115,8 @@ User credentials can be delegated to nginx using the `auth_gss_delegate_credenti
     auth_gss_constrained_delegation on;
 
 The delegated credentials will be stored within the systems tmp directory. Once the
- request is completed, the credentials file will be destroyed. The name of the credentials 
- file will be specified within the nginx variable `$krb5_cc_name`. Usage of the variable 
+ request is completed, the credentials file will be destroyed. The name of the credentials
+ file will be specified within the nginx variable `$krb5_cc_name`. Usage of the variable
  can include passing it to a fcgi program using the `fastcgi_param` directive.
 
     fastcgi_param KRB5CCNAME $krb5_cc_name;
