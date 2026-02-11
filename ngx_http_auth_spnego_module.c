@@ -894,6 +894,40 @@ done:
     return kerr ? NGX_ERROR : NGX_OK;
 }
 
+/* Helper function to find a header by name in the headers list */
+static ngx_table_elt_t *
+ngx_http_auth_spnego_find_header(ngx_http_request_t *r,
+                                  const char *header_name,
+                                  size_t header_len)
+{
+    ngx_list_part_t *part;
+    ngx_table_elt_t *h;
+    ngx_uint_t i;
+
+    part = &r->headers_in.headers.part;
+    h = part->elts;
+
+    for (i = 0; /* void */; i++) {
+        if (i >= part->nelts) {
+            if (part->next == NULL) {
+                break;
+            }
+            part = part->next;
+            h = part->elts;
+            i = 0;
+        }
+
+        /* Case-insensitive comparison of header names */
+        if (h[i].key.len == header_len &&
+            ngx_strncasecmp(h[i].key.data, (u_char *)header_name, header_len) == 0)
+        {
+            return &h[i];
+        }
+    }
+
+    return NULL;
+}
+
 ngx_int_t ngx_http_auth_spnego_basic(ngx_http_request_t *r,
                                      ngx_http_auth_spnego_ctx_t *ctx,
                                      ngx_http_auth_spnego_loc_conf_t *alcf) {
@@ -903,6 +937,7 @@ ngx_int_t ngx_http_auth_spnego_basic(ngx_http_request_t *r,
     user.data = NULL;
     ngx_str_t new_user;
     ngx_int_t ret = NGX_DECLINED;
+    ngx_table_elt_t *authority_header = NULL;
 
     krb5_context kcontext = NULL;
     krb5_error_code code;
@@ -919,7 +954,30 @@ ngx_int_t ngx_http_auth_spnego_basic(ngx_http_request_t *r,
         return NGX_ERROR;
     }
 
-    host_name = r->headers_in.host->value;
+    /* Try Host header first (HTTP/1.1, HTTP/2 with explicit Host) */
+    if (r->headers_in.host != NULL) {
+        host_name = r->headers_in.host->value;
+        spnego_debug1("Using Host header: %V", &host_name);
+    }
+    /* Fallback to :authority pseudo-header (HTTP/2, HTTP/3) */
+    else if ((authority_header = ngx_http_auth_spnego_find_header(
+                   r, ":authority", sizeof(":authority") - 1)) != NULL)
+    {
+        host_name = authority_header->value;
+        spnego_debug1("Using :authority pseudo-header: %V", &host_name);
+    }
+    /* No host information available */
+    else {
+        spnego_log_error("Client sent request without Host header or :authority pseudo-header");
+        spnego_error(NGX_ERROR);
+    }
+
+    /* Validate that host_name is not empty */
+    if (host_name.len == 0) {
+        spnego_log_error("Host or :authority header is empty");
+        spnego_error(NGX_ERROR);
+    }
+
     service.len = alcf->srvcname.len + alcf->realm.len + 3;
 
     if (ngx_strchr(alcf->srvcname.data, '/')) {
@@ -997,8 +1055,9 @@ ngx_int_t ngx_http_auth_spnego_basic(ngx_http_request_t *r,
                 r->headers_in.user.len -= alcf->realm.len + 1;
             }
         } else if (alcf->force_realm) {
-            *p = '\0';
-            user.len = ngx_strlen(r->headers_in.user.data) + 1;
+            /* Calculate username length without modifying the original buffer */
+            size_t username_len = p - r->headers_in.user.data;
+            user.len = username_len + 1;
             if (alcf->realm.len && alcf->realm.data)
                 user.len += alcf->realm.len + 1;
             user.data = ngx_pcalloc(r->pool, user.len);
@@ -1007,11 +1066,11 @@ ngx_int_t ngx_http_auth_spnego_basic(ngx_http_request_t *r,
                 spnego_error(NGX_ERROR);
             }
             if (alcf->realm.len && alcf->realm.data)
-                ngx_snprintf(user.data, user.len, "%s@%V%Z",
-                             r->headers_in.user.data, &alcf->realm);
+                ngx_snprintf(user.data, user.len, "%*s@%V%Z",
+                             username_len, r->headers_in.user.data, &alcf->realm);
             else
-                ngx_snprintf(user.data, user.len, "%s%Z",
-                             r->headers_in.user.data);
+                ngx_snprintf(user.data, user.len, "%*s%Z",
+                             username_len, r->headers_in.user.data);
             /*
              * Rewrite $remote_user with the forced realm.
              * If the forced realm is shorter than the
