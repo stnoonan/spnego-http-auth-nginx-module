@@ -898,7 +898,7 @@ ngx_int_t ngx_http_auth_spnego_basic(ngx_http_request_t *r,
                                      ngx_http_auth_spnego_ctx_t *ctx,
                                      ngx_http_auth_spnego_loc_conf_t *alcf) {
     ngx_str_t host_name;
-    ngx_str_t service;
+    ngx_str_t service = ngx_null_string;
     ngx_str_t user;
     user.data = NULL;
     ngx_str_t new_user;
