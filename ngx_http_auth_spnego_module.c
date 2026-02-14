@@ -111,9 +111,9 @@ const char *get_gss_error(ngx_pool_t *p, OM_uint32 error_status, char *prefix) {
     do {
         maj_stat = gss_display_status(&min_stat, error_status, GSS_C_MECH_CODE,
                                       GSS_C_NO_OID, &msg_ctx, &status_string);
-        if (sizeof(buf) > len + status_string.length + 1) {
-            ngx_sprintf((u_char *)buf + len, "%s:%Z",
-                        (char *)status_string.value);
+        if (sizeof(buf) > len + status_string.length + 2) {
+            ngx_snprintf((u_char *)buf + len, sizeof(buf) - len, "%*s:%Z",
+                         status_string.length, status_string.value);
             len += (status_string.length + 1);
         }
         gss_release_buffer(&min_stat, &status_string);
@@ -312,7 +312,7 @@ static void *ngx_http_auth_spnego_create_loc_conf(ngx_conf_t *cf) {
 
     conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_auth_spnego_loc_conf_t));
     if (NULL == conf) {
-        return NGX_CONF_ERROR;
+        return NULL;
     }
 
     conf->protect = NGX_CONF_UNSET;
@@ -463,6 +463,7 @@ static char *ngx_http_auth_spnego_merge_loc_conf(ngx_conf_t *cf, void *parent,
 static ngx_int_t ngx_http_auth_spnego_get_handler(ngx_http_request_t *r,
                                                   ngx_http_variable_value_t *v,
                                                   uintptr_t data) {
+    v->not_found = 1;
     return NGX_OK;
 }
 
@@ -470,6 +471,9 @@ static ngx_int_t ngx_http_auth_spnego_set_variable(ngx_http_request_t *r,
                                                    ngx_str_t *name,
                                                    ngx_str_t *value) {
     u_char *lowercase = ngx_palloc(r->pool, name->len);
+    if (lowercase == NULL) {
+        return NGX_ERROR;
+    }
 
     ngx_uint_t key = ngx_hash_strlow(lowercase, name->data, name->len);
     ngx_pfree(r->pool, lowercase);
@@ -482,6 +486,9 @@ static ngx_int_t ngx_http_auth_spnego_set_variable(ngx_http_request_t *r,
 
     v->len = value->len;
     v->data = value->data;
+    v->valid = 1;
+    v->not_found = 0;
+    v->no_cacheable = 1;
 
     return NGX_OK;
 }
@@ -761,8 +768,8 @@ static krb5_error_code ngx_http_auth_spnego_store_gss_creds(
 }
 
 static void ngx_http_auth_spnego_krb5_destroy_ccache(void *data) {
-    krb5_context kcontext;
-    krb5_ccache ccache;
+    krb5_context kcontext = NULL;
+    krb5_ccache ccache = NULL;
     krb5_error_code kerr = 0;
 
     char *ccname = (char *)data;
@@ -783,8 +790,13 @@ done:
 
 static char *ngx_http_auth_spnego_replace(ngx_http_request_t *r, char *str,
                                           char find, char replace) {
-    char *result = (char *)ngx_palloc(r->pool, ngx_strlen(str) + 1);
-    ngx_memcpy(result, str, ngx_strlen(str) + 1);
+    size_t str_len = ngx_strlen(str);
+    char *result = (char *)ngx_palloc(r->pool, str_len + 1);
+    if (result == NULL) {
+        return NULL;
+    }
+
+    ngx_memcpy(result, str, str_len + 1);
 
     char *index = NULL;
     while ((index = ngx_strchr(result, find)) != NULL) {
@@ -803,6 +815,7 @@ ngx_http_auth_spnego_store_delegated_creds(ngx_http_request_t *r,
     krb5_error_code kerr = 0;
     char *ccname = NULL;
     char *escaped = NULL;
+    bool ccname_owned_by_cleanup = false;
 
     if (!delegated_creds.data) {
         spnego_log_error(
@@ -820,7 +833,7 @@ ngx_http_auth_spnego_store_delegated_creds(ngx_http_request_t *r,
 
     if ((kerr = krb5_parse_name(kcontext, (char *)principal_name->data,
                                 &principal))) {
-        spnego_log_error("Kerberos error: Cannot parse principal %s",
+        spnego_log_error("Kerberos error: Cannot parse principal \"%V\"",
                          principal_name);
         spnego_log_krb5_error(kcontext, kerr);
         goto done;
@@ -828,13 +841,18 @@ ngx_http_auth_spnego_store_delegated_creds(ngx_http_request_t *r,
 
     escaped =
         ngx_http_auth_spnego_replace(r, (char *)principal_name->data, '/', '_');
+    if (escaped == NULL) {
+        kerr = ENOMEM;
+        goto done;
+    }
 
     size_t ccname_size = (ngx_strlen("FILE:") + ngx_strlen(P_tmpdir) +
                           ngx_strlen("/") + ngx_strlen(escaped)) +
                          1;
     ccname = (char *)ngx_pcalloc(r->pool, ccname_size);
     if (NULL == ccname) {
-        return NGX_ERROR;
+        kerr = ENOMEM;
+        goto done;
     }
 
     ngx_snprintf((u_char *)ccname, ccname_size, "FILE:%s/%*s", P_tmpdir,
@@ -874,15 +892,17 @@ ngx_http_auth_spnego_store_delegated_creds(ngx_http_request_t *r,
 
     ngx_pool_cleanup_t *cln = ngx_pool_cleanup_add(r->pool, 0);
     if (NULL == cln) {
-        return NGX_ERROR;
+        kerr = ENOMEM;
+        goto done;
     }
 
     cln->handler = ngx_http_auth_spnego_krb5_destroy_ccache;
     cln->data = ccname;
+    ccname_owned_by_cleanup = true;
 done:
     if (escaped)
         ngx_pfree(r->pool, escaped);
-    if (ccname)
+    if (ccname && !ccname_owned_by_cleanup)
         ngx_pfree(r->pool, ccname);
     if (principal)
         krb5_free_principal(kcontext, principal);
@@ -1545,7 +1565,11 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t *r,
                                            "gss_display_name() failed"),
                              (u_char *)service.value);
         }
-        spnego_debug1("my_gss_name %s", human_readable_gss_name.value);
+        spnego_debug2("my_gss_name %*s", human_readable_gss_name.length,
+                      human_readable_gss_name.value);
+        if (human_readable_gss_name.length) {
+            gss_release_buffer(&minor_status2, &human_readable_gss_name);
+        }
 
         if (alcf->constrained_delegation) {
             ngx_str_t service_name = ngx_null_string;
@@ -1620,6 +1644,9 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t *r,
         /* Apply local rules to map Kerberos Principals to short names */
         if (alcf->map_to_local) {
             gss_OID mech_type = discard_const(gss_mech_krb5);
+            if (output_token.length) {
+                gss_release_buffer(&minor_status2, &output_token);
+            }
             output_token = (gss_buffer_desc)GSS_C_EMPTY_BUFFER;
             major_status = gss_localname(&minor_status, client_name, mech_type,
                                          &output_token);
