@@ -919,7 +919,19 @@ ngx_int_t ngx_http_auth_spnego_basic(ngx_http_request_t *r,
         return NGX_ERROR;
     }
 
-    host_name = r->headers_in.host->value;
+    /*
+     * Use nginx's parsed request host when available. This is populated from
+     * Host/:authority by core request parsing and avoids dereferencing a NULL
+     * host header pointer on HTTP/2 and HTTP/3 requests.
+     */
+    host_name = r->headers_in.server;
+    if (host_name.len == 0 && r->headers_in.host != NULL) {
+        host_name = r->headers_in.host->value;
+    }
+    if (host_name.len == 0) {
+        spnego_log_error("Client sent request without a valid host name");
+        spnego_error(NGX_ERROR);
+    }
     service.len = alcf->srvcname.len + alcf->realm.len + 3;
 
     if (ngx_strchr(alcf->srvcname.data, '/')) {
@@ -997,8 +1009,11 @@ ngx_int_t ngx_http_auth_spnego_basic(ngx_http_request_t *r,
                 r->headers_in.user.len -= alcf->realm.len + 1;
             }
         } else if (alcf->force_realm) {
-            *p = '\0';
-            user.len = ngx_strlen(r->headers_in.user.data) + 1;
+            ngx_str_t short_user;
+
+            short_user.data = r->headers_in.user.data;
+            short_user.len = p - r->headers_in.user.data;
+            user.len = short_user.len + 1;
             if (alcf->realm.len && alcf->realm.data)
                 user.len += alcf->realm.len + 1;
             user.data = ngx_pcalloc(r->pool, user.len);
@@ -1007,11 +1022,10 @@ ngx_int_t ngx_http_auth_spnego_basic(ngx_http_request_t *r,
                 spnego_error(NGX_ERROR);
             }
             if (alcf->realm.len && alcf->realm.data)
-                ngx_snprintf(user.data, user.len, "%s@%V%Z",
-                             r->headers_in.user.data, &alcf->realm);
+                ngx_snprintf(user.data, user.len, "%V@%V%Z", &short_user,
+                             &alcf->realm);
             else
-                ngx_snprintf(user.data, user.len, "%s%Z",
-                             r->headers_in.user.data);
+                ngx_snprintf(user.data, user.len, "%V%Z", &short_user);
             /*
              * Rewrite $remote_user with the forced realm.
              * If the forced realm is shorter than the
