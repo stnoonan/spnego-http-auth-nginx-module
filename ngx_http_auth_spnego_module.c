@@ -814,6 +814,7 @@ ngx_http_auth_spnego_store_delegated_creds(ngx_http_request_t *r,
     krb5_error_code kerr = 0;
     char *ccname = NULL;
     char *escaped = NULL;
+    char *principal_cstr = NULL;
     bool ccname_owned_by_cleanup = false;
 
     if (!delegated_creds.data) {
@@ -830,16 +831,22 @@ ngx_http_auth_spnego_store_delegated_creds(ngx_http_request_t *r,
         goto done;
     }
 
-    if ((kerr = krb5_parse_name(kcontext, (char *)principal_name->data,
-                                &principal))) {
+    principal_cstr = ngx_pnalloc(r->pool, principal_name->len + 1);
+    if (principal_cstr == NULL) {
+        kerr = ENOMEM;
+        goto done;
+    }
+    ngx_memcpy(principal_cstr, principal_name->data, principal_name->len);
+    principal_cstr[principal_name->len] = '\0';
+
+    if ((kerr = krb5_parse_name(kcontext, principal_cstr, &principal))) {
         spnego_log_error("Kerberos error: Cannot parse principal \"%V\"",
                          principal_name);
         spnego_log_krb5_error(kcontext, kerr);
         goto done;
     }
 
-    escaped =
-        ngx_http_auth_spnego_replace(r, (char *)principal_name->data, '/', '_');
+    escaped = ngx_http_auth_spnego_replace(r, principal_cstr, '/', '_');
     if (escaped == NULL) {
         kerr = ENOMEM;
         goto done;
@@ -887,7 +894,10 @@ ngx_http_auth_spnego_store_delegated_creds(ngx_http_request_t *r,
     var_value.data = (u_char *)ccname;
     var_value.len = ngx_strlen(ccname);
 
-    ngx_http_auth_spnego_set_variable(r, &var_name, &var_value);
+    if (ngx_http_auth_spnego_set_variable(r, &var_name, &var_value) != NGX_OK) {
+        kerr = KRB5_CC_WRITE;
+        goto done;
+    }
 
     ngx_pool_cleanup_t *cln = ngx_pool_cleanup_add(r->pool, 0);
     if (NULL == cln) {
@@ -901,6 +911,8 @@ ngx_http_auth_spnego_store_delegated_creds(ngx_http_request_t *r,
 done:
     if (escaped)
         ngx_pfree(r->pool, escaped);
+    if (principal_cstr)
+        ngx_pfree(r->pool, principal_cstr);
     if (ccname && !ccname_owned_by_cleanup)
         ngx_pfree(r->pool, ccname);
     if (principal)
