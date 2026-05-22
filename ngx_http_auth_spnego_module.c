@@ -1112,8 +1112,8 @@ ngx_int_t ngx_http_auth_spnego_basic(ngx_http_request_t *r,
         spnego_error(NGX_ERROR);
     }
 
-    if (r->headers_in.passwd.len > 1024) {
-        spnego_log_error("Password too long");
+    if (r->headers_in.passwd.len >= (size_t)(-1)) {
+        spnego_log_error("Password length exceeds maximum");
         spnego_error(NGX_DECLINED);
     }
     char *passwd = ngx_pnalloc(r->pool, r->headers_in.passwd.len + 1);
