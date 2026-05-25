@@ -68,6 +68,9 @@ static void *ngx_http_auth_spnego_create_loc_conf(ngx_conf_t *);
 static char *ngx_http_auth_spnego_merge_loc_conf(ngx_conf_t *, void *, void *);
 static ngx_int_t ngx_http_auth_spnego_init(ngx_conf_t *);
 
+static ngx_http_output_header_filter_pt ngx_http_next_header_filter;
+static ngx_int_t ngx_http_auth_spnego_header_filter(ngx_http_request_t *r);
+
 #if (NGX_PCRE)
 static char *ngx_conf_set_regex_array_slot(ngx_conf_t *cf, ngx_command_t *cmd,
                                            void *conf);
@@ -138,6 +141,7 @@ typedef struct {
     ngx_flag_t map_to_local;
     ngx_flag_t delegate_credentials;
     ngx_flag_t constrained_delegation;
+    ngx_flag_t preserve_mutual_auth;
 } ngx_http_auth_spnego_loc_conf_t;
 
 static void ngx_http_auth_spnego_strip_realm(ngx_http_request_t *,
@@ -206,6 +210,10 @@ static ngx_command_t ngx_http_auth_spnego_commands[] = {
     {ngx_string("auth_gss_constrained_delegation"), SPNEGO_NGX_CONF_FLAGS,
      ngx_conf_set_flag_slot, NGX_HTTP_LOC_CONF_OFFSET,
      offsetof(ngx_http_auth_spnego_loc_conf_t, constrained_delegation), NULL},
+
+    {ngx_string("auth_gss_preserve_mutual_auth"), SPNEGO_NGX_CONF_FLAGS,
+     ngx_conf_set_flag_slot, NGX_HTTP_LOC_CONF_OFFSET,
+     offsetof(ngx_http_auth_spnego_loc_conf_t, preserve_mutual_auth), NULL},
 
     ngx_null_command};
 
@@ -309,6 +317,7 @@ static void *ngx_http_auth_spnego_create_loc_conf(ngx_conf_t *cf) {
     conf->map_to_local = NGX_CONF_UNSET;
     conf->delegate_credentials = NGX_CONF_UNSET;
     conf->constrained_delegation = NGX_CONF_UNSET;
+    conf->preserve_mutual_auth = NGX_CONF_UNSET;
 
     return conf;
 }
@@ -404,6 +413,8 @@ static char *ngx_http_auth_spnego_merge_loc_conf(ngx_conf_t *cf, void *parent,
                              prev->delegate_credentials, 0);
     ngx_conf_merge_off_value(conf->constrained_delegation,
                              prev->constrained_delegation, 0);
+    ngx_conf_merge_off_value(conf->preserve_mutual_auth,
+                             prev->preserve_mutual_auth, 1);
 
 #if (NGX_DEBUG)
     ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0, "auth_spnego: protect = %i",
@@ -527,6 +538,9 @@ static ngx_int_t ngx_http_auth_spnego_init(ngx_conf_t *cf) {
         return NGX_ERROR;
     }
 
+    ngx_http_next_header_filter = ngx_http_top_header_filter;
+    ngx_http_top_header_filter = ngx_http_auth_spnego_header_filter;
+
     return NGX_OK;
 }
 
@@ -612,6 +626,75 @@ ngx_http_auth_spnego_headers(ngx_http_request_t *r,
 
     ctx->head = 1;
     return NGX_OK;
+}
+
+static ngx_uint_t
+ngx_http_auth_spnego_mutual_token_present(ngx_http_request_t *r)
+{
+    ngx_table_elt_t  *h;
+    size_t            prefix;
+
+    prefix = sizeof("Negotiate ") - 1;
+
+    for (h = r->headers_out.www_authenticate; h; h = h->next) {
+        if (h->hash == 0 || h->value.len <= prefix) {
+            continue;
+        }
+
+        if (ngx_strncmp(h->value.data, "Negotiate ", prefix) == 0
+            && h->value.len > prefix)
+        {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static ngx_int_t
+ngx_http_auth_spnego_header_filter(ngx_http_request_t *r)
+{
+    ngx_http_auth_spnego_ctx_t       *ctx;
+    ngx_http_auth_spnego_loc_conf_t  *alcf;
+    ngx_str_t                         value;
+
+    if (r != r->main) {
+        return ngx_http_next_header_filter(r);
+    }
+
+    alcf = ngx_http_get_module_loc_conf(r, ngx_http_auth_spnego_module);
+    if (alcf == NULL || alcf->protect == 0 || alcf->preserve_mutual_auth == 0) {
+        return ngx_http_next_header_filter(r);
+    }
+
+    if (r->headers_out.status < NGX_HTTP_OK
+        || r->headers_out.status >= NGX_HTTP_SPECIAL_RESPONSE)
+    {
+        return ngx_http_next_header_filter(r);
+    }
+
+    ctx = ngx_http_get_module_ctx(r, ngx_http_auth_spnego_module);
+    if (ctx == NULL || ctx->ret != NGX_OK || ctx->token_out_b64.len == 0) {
+        return ngx_http_next_header_filter(r);
+    }
+
+    if (ngx_http_auth_spnego_mutual_token_present(r)) {
+        return ngx_http_next_header_filter(r);
+    }
+
+    value.len = sizeof("Negotiate ") - 1 + ctx->token_out_b64.len;
+    value.data = ngx_pnalloc(r->pool, value.len);
+    if (value.data == NULL) {
+        return NGX_ERROR;
+    }
+
+    ngx_snprintf(value.data, value.len, "Negotiate %V", &ctx->token_out_b64);
+
+    if (ngx_http_auth_spnego_add_www_authenticate(r, &value, 1) != NGX_OK) {
+        return NGX_ERROR;
+    }
+
+    return ngx_http_next_header_filter(r);
 }
 
 static bool

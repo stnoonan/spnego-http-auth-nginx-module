@@ -123,6 +123,23 @@ config file.
 
     auth_gss_allow_basic_fallback off
 
+SPNEGO mutual authentication with `satisfy any`
+-------------------------------------------------
+
+nginx clears `WWW-Authenticate` on successful auth when `satisfy any` is
+enabled, which breaks SPNEGO mutual authentication (the server token must be
+returned on the final 2xx response). See [nginx#861](https://github.com/nginx/nginx/issues/861).
+
+This module registers an output header filter (enabled by default) to restore
+the mutual-auth token when nginx strips it:
+
+    auth_gss_preserve_mutual_auth on;   # default
+    auth_gss_preserve_mutual_auth off;  # disable if nginx is patched
+
+This workaround does not fix combining `auth_basic` and `auth_gss` under
+`satisfy any` when Basic auth fails after SPNEGO succeeds (final 401). Avoid
+using both in the same `satisfy any` context for mutual auth.
+
 These options affect the operation of basic authentication:
 * `auth_gss_realm`: Kerberos realm name.  If this is specified, the realm is
   only passed to the nginx variable $remote_user if it differs from this

@@ -450,6 +450,30 @@ server {
                 auth_gss_delegate_credentials on;
                 auth_gss_constrained_delegation on;
 	}
+
+	location = /satisfy-preserve-on {
+		satisfy any;
+		auth_gss on;
+		auth_gss_realm ${KERBEROS_REALM};
+		auth_gss_keytab /etc/krb5.http.keytab;
+		auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+		auth_gss_allow_basic_fallback off;
+		auth_gss_preserve_mutual_auth on;
+		default_type text/plain;
+		return 200 "OK\n";
+	}
+
+	location = /satisfy-preserve-off {
+		satisfy any;
+		auth_gss on;
+		auth_gss_realm ${KERBEROS_REALM};
+		auth_gss_keytab /etc/krb5.http.keytab;
+		auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+		auth_gss_allow_basic_fallback off;
+		auth_gss_preserve_mutual_auth off;
+		default_type text/plain;
+		return 200 "OK\n";
+	}
 }
 EOF
 then
@@ -656,6 +680,67 @@ test_basic()
 
 }
 
+curl_negotiate_final_has_mutual_token()
+{
+	URL="$1"
+	HDRS_FILE="${CURL_OUTPUT}.headers"
+
+	rm -f "${HDRS_FILE}"
+	CODE="$(curl --max-time 60 --negotiate -u : -s -D "${HDRS_FILE}" -o "${CURL_OUTPUT}" \
+		-w "%{http_code}" "${URL}")" || CODE="000"
+
+	if [ "${CODE}" != "200" ]; then
+		return 1
+	fi
+
+	awk '
+		/^HTTP\// {
+			if (in200 && block ~ /WWW-Authenticate: Negotiate [A-Za-z0-9+\/=]+/)
+				found = 1
+			in200 = ($2 == 200)
+			block = ""
+			next
+		}
+		in200 { block = block $0 ORS }
+		END {
+			if (in200 && block ~ /WWW-Authenticate: Negotiate [A-Za-z0-9+\/=]+/)
+				found = 1
+			exit(found ? 0 : 1
+		}
+	' "${HDRS_FILE}"
+}
+
+test_preserve_mutual_auth()
+{
+	printf "satisfy any + preserve on (expect mutual token on 200) ... "
+	if curl_negotiate_final_has_mutual_token \
+		"http://${TEST_HOST_FQDN}:8080/satisfy-preserve-on"; then
+		echo "OK"
+	else
+		EX=1
+		echo "FAILED"
+		if [ -e "${CURL_OUTPUT}.headers" ]; then
+			echo "Final response headers:"
+			cat "${CURL_OUTPUT}.headers"
+			echo ""
+		fi
+	fi
+
+	printf "satisfy any + preserve off (expect no mutual token on 200) ... "
+	if curl_negotiate_final_has_mutual_token \
+		"http://${TEST_HOST_FQDN}:8080/satisfy-preserve-off"; then
+		EX=1
+		echo "FAILED (token present but should be stripped)"
+		if [ -e "${CURL_OUTPUT}.headers" ]; then
+			echo "Final response headers:"
+			cat "${CURL_OUTPUT}.headers"
+			echo ""
+		fi
+	else
+		echo "OK"
+	fi
+}
+
 test_ldapwhoami()
 {
 	LDAP_EXPECTED="dn:uid=${1},cn=gss-spnego,cn=auth"
@@ -701,6 +786,7 @@ test_path "fallback.php" 401 403
 test_path "noauth.php" 200 200
 test_path "auth.php" 401 200
 test_path "delegate.php" 401 200
+test_preserve_mutual_auth
 test_ldapwhoami "alice"
 
 
