@@ -1694,12 +1694,42 @@ done:
     return kerr ? NGX_ERROR : NGX_OK;
 }
 
+static ngx_int_t
+ngx_http_auth_spnego_store_output_token(ngx_http_request_t *r,
+                                        ngx_http_auth_spnego_ctx_t *ctx,
+                                        gss_buffer_desc *output_token)
+{
+    ngx_str_t  spnego_token;
+    OM_uint32  minor_status;
+
+    if (output_token->length == 0) {
+        ctx->token_out_b64.len = 0;
+        ctx->token_out_b64.data = NULL;
+        return NGX_OK;
+    }
+
+    spnego_token.data = (u_char *) output_token->value;
+    spnego_token.len = output_token->length;
+
+    ctx->token_out_b64.len = ngx_base64_encoded_length(spnego_token.len);
+    ctx->token_out_b64.data = ngx_pcalloc(r->pool, ctx->token_out_b64.len + 1);
+    if (ctx->token_out_b64.data == NULL) {
+        spnego_log_error("Not enough memory");
+        gss_release_buffer(&minor_status, output_token);
+        return NGX_ERROR;
+    }
+
+    ngx_encode_base64(&ctx->token_out_b64, &spnego_token);
+    gss_release_buffer(&minor_status, output_token);
+
+    return NGX_OK;
+}
+
 ngx_int_t
 ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t *r,
                                    ngx_http_auth_spnego_ctx_t *ctx,
                                    ngx_http_auth_spnego_loc_conf_t *alcf) {
     ngx_int_t ret = NGX_DECLINED;
-    ngx_str_t spnego_token = ngx_null_string;
     OM_uint32 major_status, minor_status, minor_status2;
     gss_buffer_desc service = GSS_C_EMPTY_BUFFER;
     gss_name_t my_gss_name = GSS_C_NO_NAME;
@@ -1711,6 +1741,8 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t *r,
     gss_ctx_id_t gss_context = GSS_C_NO_CONTEXT;
     gss_name_t client_name = GSS_C_NO_NAME;
     gss_buffer_desc output_token = GSS_C_EMPTY_BUFFER;
+    gss_buffer_desc empty_token = GSS_C_EMPTY_BUFFER;
+    OM_uint32       ret_flags = 0;
 
     if (NULL == ctx || ctx->token.len == 0)
         return ret;
@@ -1791,8 +1823,8 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t *r,
 
     major_status = gss_accept_sec_context(
         &minor_status, &gss_context, my_gss_creds, &input_token,
-        GSS_C_NO_CHANNEL_BINDINGS, &client_name, NULL, &output_token, NULL,
-        NULL, &delegated_creds);
+        GSS_C_NO_CHANNEL_BINDINGS, &client_name, NULL, &output_token,
+        &ret_flags, NULL, &delegated_creds);
     if (GSS_ERROR(major_status)) {
         spnego_debug1("%s", get_gss_error(r->pool, minor_status,
                                           "gss_accept_sec_context() failed"));
@@ -1800,26 +1832,42 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t *r,
     }
 
     if (major_status & GSS_S_CONTINUE_NEEDED) {
-        spnego_debug0("only one authentication iteration allowed");
-        spnego_error(NGX_DECLINED);
-    }
+        if (output_token.length == 0) {
+            spnego_debug0("GSS continue needed without output token");
+            spnego_error(NGX_DECLINED);
+        }
 
-    if (output_token.length) {
-        spnego_token.data = (u_char *)output_token.value;
-        spnego_token.len = output_token.length;
-
-        ctx->token_out_b64.len = ngx_base64_encoded_length(spnego_token.len);
-        ctx->token_out_b64.data =
-            ngx_pcalloc(r->pool, ctx->token_out_b64.len + 1);
-        if (NULL == ctx->token_out_b64.data) {
-            spnego_log_error("Not enough memory");
-            gss_release_buffer(&minor_status2, &output_token);
+        spnego_debug0("GSS mutual authentication output token");
+        if (ngx_http_auth_spnego_store_output_token(r, ctx, &output_token) !=
+            NGX_OK) {
             spnego_error(NGX_ERROR);
         }
-        ngx_encode_base64(&ctx->token_out_b64, &spnego_token);
-        gss_release_buffer(&minor_status2, &output_token);
+
+    } else if (output_token.length) {
+        if (ngx_http_auth_spnego_store_output_token(r, ctx, &output_token) !=
+            NGX_OK) {
+            spnego_error(NGX_ERROR);
+        }
+
+    } else if (ret_flags & GSS_C_MUTUAL_FLAG) {
+        major_status = gss_accept_sec_context(
+            &minor_status, &gss_context, my_gss_creds, &empty_token,
+            GSS_C_NO_CHANNEL_BINDINGS, NULL, NULL, &output_token, NULL, NULL,
+            NULL);
+
+        if (!GSS_ERROR(major_status) && output_token.length) {
+            if (ngx_http_auth_spnego_store_output_token(r, ctx, &output_token)
+                != NGX_OK) {
+                spnego_error(NGX_ERROR);
+            }
+        } else {
+            ctx->token_out_b64.len = 0;
+            ctx->token_out_b64.data = NULL;
+        }
+
     } else {
         ctx->token_out_b64.len = 0;
+        ctx->token_out_b64.data = NULL;
     }
 
     /* getting user name at the other end of the request */
@@ -1917,6 +1965,8 @@ static ngx_int_t ngx_http_auth_spnego_handler(ngx_http_request_t *r) {
         }
         ctx->token.len = 0;
         ctx->token.data = NULL;
+        ctx->token_out_b64.len = 0;
+        ctx->token_out_b64.data = NULL;
         ctx->head = 0;
         ctx->ret = NGX_HTTP_UNAUTHORIZED;
         ngx_http_set_ctx(r, ctx, ngx_http_auth_spnego_module);
