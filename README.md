@@ -140,6 +140,11 @@ This workaround does not fix combining `auth_basic` and `auth_gss` under
 `satisfy any` when Basic auth fails after SPNEGO succeeds (final 401). Avoid
 using both in the same `satisfy any` context for mutual auth.
 
+The `return` directive is evaluated in the rewrite phase before the access
+phase, so `auth_gss` does not run for `return 200 "body"` in the same location.
+Serve content via `alias`, `root`, or a proxied upstream after authentication
+instead.
+
 These options affect the operation of basic authentication:
 * `auth_gss_realm`: Kerberos realm name.  If this is specified, the realm is
   only passed to the nginx variable $remote_user if it differs from this
