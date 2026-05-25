@@ -121,6 +121,9 @@ typedef struct {
     ngx_str_t token_out_b64; /* base64 encoded output tokent */
 } ngx_http_auth_spnego_ctx_t;
 
+static ngx_http_auth_spnego_ctx_t *
+ngx_http_auth_spnego_get_ctx(ngx_http_request_t *r);
+
 typedef struct {
     ngx_flag_t protect;
     ngx_str_t realm;
@@ -659,6 +662,29 @@ ngx_http_auth_spnego_mutual_token_present(ngx_http_request_t *r)
     return 0;
 }
 
+static ngx_http_auth_spnego_ctx_t *
+ngx_http_auth_spnego_get_ctx(ngx_http_request_t *r)
+{
+    ngx_http_auth_spnego_ctx_t  *ctx;
+    ngx_http_request_t          *auth_r;
+
+    ctx = ngx_http_get_module_ctx(r, ngx_http_auth_spnego_module);
+    if (ctx != NULL) {
+        return ctx;
+    }
+
+    auth_r = r;
+    while (auth_r->parent) {
+        auth_r = auth_r->parent;
+    }
+
+    if (auth_r != r) {
+        return ngx_http_get_module_ctx(auth_r, ngx_http_auth_spnego_module);
+    }
+
+    return NULL;
+}
+
 static ngx_uint_t
 ngx_http_auth_spnego_is_negotiate_mutual_value(ngx_str_t *value)
 {
@@ -739,10 +765,8 @@ ngx_http_auth_spnego_preserve_mutual_auth(ngx_http_request_t *r)
         return NGX_DECLINED;
     }
 
-    ctx = ngx_http_get_module_ctx(r, ngx_http_auth_spnego_module);
+    ctx = ngx_http_auth_spnego_get_ctx(r);
     if (ctx == NULL || ctx->token_out_b64.len == 0) {
-        spnego_log_error("spnego preserve: skip (ctx=%p token_out_b64.len=%uz)",
-                         ctx, ctx ? ctx->token_out_b64.len : 0);
         return NGX_DECLINED;
     }
 
@@ -1871,10 +1895,6 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t *r,
         ctx->token_out_b64.len = 0;
         ctx->token_out_b64.data = NULL;
     }
-
-    spnego_log_error("spnego auth: token_out_b64.len=%uz ret_flags=0%uxD major=0%uxD",
-                     ctx->token_out_b64.len, (uint32_t) ret_flags,
-                     (uint32_t) major_status);
 
     /* getting user name at the other end of the request */
     major_status =
