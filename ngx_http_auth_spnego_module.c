@@ -667,8 +667,11 @@ ngx_http_auth_spnego_header_filter(ngx_http_request_t *r)
         return ngx_http_next_header_filter(r);
     }
 
-    if (r->headers_out.status < NGX_HTTP_OK
-        || r->headers_out.status >= NGX_HTTP_SPECIAL_RESPONSE)
+    /* status may still be 0 here for a 200 from return/content; only skip
+     * explicit non-2xx responses */
+    if (r->headers_out.status != 0
+        && (r->headers_out.status < NGX_HTTP_OK
+            || r->headers_out.status >= NGX_HTTP_SPECIAL_RESPONSE))
     {
         return ngx_http_next_header_filter(r);
     }

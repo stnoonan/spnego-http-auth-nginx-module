@@ -705,7 +705,9 @@ curl_negotiate_final_has_mutual_token()
 		END {
 			if (in200 && block ~ /WWW-Authenticate: Negotiate [A-Za-z0-9+\/=]+/)
 				found = 1
-			exit(found ? 0 : 1
+			if (found)
+				exit 0
+			exit 1
 		}
 	' "${HDRS_FILE}"
 }
