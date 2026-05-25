@@ -796,9 +796,9 @@ test_basic "fallback.php" 401 200
 test_path "fallback.php" 401 403
 test_path "noauth.php" 200 200
 test_path "auth.php" 401 200
-test_path "delegate.php" 401 200
-test_preserve_mutual_auth
-test_ldapwhoami "alice"
+	test_path "delegate.php" 401 200
+	test_ldapwhoami "alice"
+	test_preserve_mutual_auth
 
 
 echo ""
