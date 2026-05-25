@@ -754,7 +754,7 @@ test_preserve_mutual_auth()
 
 test_ldapwhoami()
 {
-	LDAP_EXPECTED="dn:uid=${1},cn=gssapi,cn=auth"
+	LDAP_EXPECTED="dn:uid=${1},cn=gss-spnego,cn=auth"
 
 	printf "Result of ldapwhoami via delegation ... "
 	if [ -e "${CURL_OUTPUT}" ]; then
