@@ -741,6 +741,8 @@ ngx_http_auth_spnego_preserve_mutual_auth(ngx_http_request_t *r)
 
     ctx = ngx_http_get_module_ctx(r, ngx_http_auth_spnego_module);
     if (ctx == NULL || ctx->token_out_b64.len == 0) {
+        spnego_log_error("spnego preserve: skip (ctx=%p token_out_b64.len=%uz)",
+                         ctx, ctx ? ctx->token_out_b64.len : 0);
         return NGX_DECLINED;
     }
 
@@ -1869,6 +1871,10 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t *r,
         ctx->token_out_b64.len = 0;
         ctx->token_out_b64.data = NULL;
     }
+
+    spnego_log_error("spnego auth: token_out_b64.len=%uz ret_flags=0%uxD major=0%uxD",
+                     ctx->token_out_b64.len, (uint32_t) ret_flags,
+                     (uint32_t) major_status);
 
     /* getting user name at the other end of the request */
     major_status =
