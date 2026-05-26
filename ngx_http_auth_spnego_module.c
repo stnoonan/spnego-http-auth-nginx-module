@@ -70,7 +70,9 @@ static ngx_int_t ngx_http_auth_spnego_init(ngx_conf_t *);
 
 static ngx_http_output_header_filter_pt ngx_http_next_header_filter;
 static ngx_int_t ngx_http_auth_spnego_header_filter(ngx_http_request_t *r);
-static ngx_int_t ngx_http_auth_spnego_precontent_preserve(ngx_http_request_t *r);
+static ngx_int_t ngx_http_auth_spnego_add_www_authenticate(ngx_http_request_t *r,
+                                                            ngx_str_t *value,
+                                                            ngx_uint_t hash);
 
 #if (NGX_PCRE)
 static char *ngx_conf_set_regex_array_slot(ngx_conf_t *cf, ngx_command_t *cmd,
@@ -121,9 +123,6 @@ typedef struct {
     ngx_str_t token_out_b64; /* base64 encoded output tokent */
 } ngx_http_auth_spnego_ctx_t;
 
-static ngx_http_auth_spnego_ctx_t *
-ngx_http_auth_spnego_get_ctx(ngx_http_request_t *r);
-
 typedef struct {
     ngx_flag_t protect;
     ngx_str_t realm;
@@ -145,7 +144,6 @@ typedef struct {
     ngx_flag_t map_to_local;
     ngx_flag_t delegate_credentials;
     ngx_flag_t constrained_delegation;
-    ngx_flag_t preserve_mutual_auth;
 } ngx_http_auth_spnego_loc_conf_t;
 
 static void ngx_http_auth_spnego_strip_realm(ngx_http_request_t *,
@@ -214,10 +212,6 @@ static ngx_command_t ngx_http_auth_spnego_commands[] = {
     {ngx_string("auth_gss_constrained_delegation"), SPNEGO_NGX_CONF_FLAGS,
      ngx_conf_set_flag_slot, NGX_HTTP_LOC_CONF_OFFSET,
      offsetof(ngx_http_auth_spnego_loc_conf_t, constrained_delegation), NULL},
-
-    {ngx_string("auth_gss_preserve_mutual_auth"), SPNEGO_NGX_CONF_FLAGS,
-     ngx_conf_set_flag_slot, NGX_HTTP_LOC_CONF_OFFSET,
-     offsetof(ngx_http_auth_spnego_loc_conf_t, preserve_mutual_auth), NULL},
 
     ngx_null_command};
 
@@ -321,7 +315,6 @@ static void *ngx_http_auth_spnego_create_loc_conf(ngx_conf_t *cf) {
     conf->map_to_local = NGX_CONF_UNSET;
     conf->delegate_credentials = NGX_CONF_UNSET;
     conf->constrained_delegation = NGX_CONF_UNSET;
-    conf->preserve_mutual_auth = NGX_CONF_UNSET;
 
     return conf;
 }
@@ -417,8 +410,6 @@ static char *ngx_http_auth_spnego_merge_loc_conf(ngx_conf_t *cf, void *parent,
                              prev->delegate_credentials, 0);
     ngx_conf_merge_off_value(conf->constrained_delegation,
                              prev->constrained_delegation, 0);
-    ngx_conf_merge_off_value(conf->preserve_mutual_auth,
-                             prev->preserve_mutual_auth, 1);
 
 #if (NGX_DEBUG)
     ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0, "auth_spnego: protect = %i",
@@ -537,13 +528,6 @@ static ngx_int_t ngx_http_auth_spnego_init(ngx_conf_t *cf) {
 
     *h = ngx_http_auth_spnego_handler;
 
-    h = ngx_array_push(&cmcf->phases[NGX_HTTP_PRECONTENT_PHASE].handlers);
-    if (NULL == h) {
-        return NGX_ERROR;
-    }
-
-    *h = ngx_http_auth_spnego_precontent_preserve;
-
     ngx_str_t var_name = ngx_string(CCACHE_VARIABLE_NAME);
     if (ngx_http_auth_spnego_add_variable(cf, &var_name) != NGX_OK) {
         return NGX_ERROR;
@@ -639,135 +623,16 @@ ngx_http_auth_spnego_headers(ngx_http_request_t *r,
     return NGX_OK;
 }
 
-static ngx_uint_t
-ngx_http_auth_spnego_mutual_token_present(ngx_http_request_t *r)
+static ngx_int_t
+ngx_http_auth_spnego_header_filter(ngx_http_request_t *r)
 {
-    ngx_table_elt_t  *h;
-    size_t            prefix;
-
-    prefix = sizeof("Negotiate ") - 1;
-
-    for (h = r->headers_out.www_authenticate; h; h = h->next) {
-        if (h->hash == 0 || h->value.len <= prefix) {
-            continue;
-        }
-
-        if (ngx_strncmp(h->value.data, "Negotiate ", prefix) == 0
-            && h->value.len > prefix)
-        {
-            return 1;
-        }
-    }
-
-    return 0;
-}
-
-static ngx_http_auth_spnego_ctx_t *
-ngx_http_auth_spnego_get_ctx(ngx_http_request_t *r)
-{
-    ngx_http_auth_spnego_ctx_t  *ctx;
-    ngx_http_request_t          *auth_r;
+    ngx_http_auth_spnego_ctx_t *ctx;
+    ngx_str_t                   value;
 
     ctx = ngx_http_get_module_ctx(r, ngx_http_auth_spnego_module);
-    if (ctx != NULL) {
-        return ctx;
-    }
 
-    auth_r = r;
-    while (auth_r->parent) {
-        auth_r = auth_r->parent;
-    }
-
-    if (auth_r != r) {
-        return ngx_http_get_module_ctx(auth_r, ngx_http_auth_spnego_module);
-    }
-
-    return NULL;
-}
-
-static ngx_uint_t
-ngx_http_auth_spnego_is_negotiate_mutual_value(ngx_str_t *value)
-{
-    size_t  prefix;
-
-    prefix = sizeof("Negotiate ") - 1;
-
-    return value->len > prefix
-           && ngx_strncmp(value->data, "Negotiate ", prefix) == 0;
-}
-
-/* nginx satisfy any clears WWW-Authenticate via hash=0; restore for Negotiate */
-static void
-ngx_http_auth_spnego_restore_mutual_auth_headers(ngx_http_request_t *r)
-{
-    ngx_list_part_t  *part;
-    ngx_table_elt_t  *header, *h;
-    ngx_uint_t        i;
-    size_t            key_len;
-
-    key_len = sizeof("WWW-Authenticate") - 1;
-
-    for (h = r->headers_out.www_authenticate; h; h = h->next) {
-        if (h->hash == 0
-            && ngx_http_auth_spnego_is_negotiate_mutual_value(&h->value))
-        {
-            h->hash = 1;
-        }
-    }
-
-    part = &r->headers_out.headers.part;
-    header = part->elts;
-
-    for (i = 0; /* void */; i++) {
-        if (i >= part->nelts) {
-            if (part->next == NULL) {
-                break;
-            }
-
-            part = part->next;
-            header = part->elts;
-            i = 0;
-        }
-
-        if (header[i].hash == 0
-            && header[i].key.len == key_len
-            && ngx_strncasecmp(header[i].key.data, (u_char *) "WWW-Authenticate",
-                               key_len) == 0
-            && ngx_http_auth_spnego_is_negotiate_mutual_value(&header[i].value))
-        {
-            header[i].hash = 1;
-        }
-    }
-}
-
-static ngx_int_t
-ngx_http_auth_spnego_preserve_mutual_auth(ngx_http_request_t *r)
-{
-    ngx_http_auth_spnego_ctx_t       *ctx;
-    ngx_http_auth_spnego_loc_conf_t  *alcf;
-    ngx_str_t                         value;
-
-    alcf = ngx_http_get_module_loc_conf(r, ngx_http_auth_spnego_module);
-    if (alcf == NULL || alcf->protect == 0 || alcf->preserve_mutual_auth == 0) {
-        return NGX_DECLINED;
-    }
-
-    if (r->headers_out.status != 0
-        && (r->headers_out.status < NGX_HTTP_OK
-            || r->headers_out.status >= NGX_HTTP_SPECIAL_RESPONSE))
-    {
-        return NGX_DECLINED;
-    }
-
-    ngx_http_auth_spnego_restore_mutual_auth_headers(r);
-
-    if (ngx_http_auth_spnego_mutual_token_present(r)) {
-        return NGX_DECLINED;
-    }
-
-    ctx = ngx_http_auth_spnego_get_ctx(r);
-    if (ctx == NULL || ctx->token_out_b64.len == 0) {
-        return NGX_DECLINED;
+    if (ctx == NULL || ctx->ret != NGX_OK || ctx->token_out_b64.len == 0) {
+        return ngx_http_next_header_filter(r);
     }
 
     value.len = sizeof("Negotiate ") - 1 + ctx->token_out_b64.len;
@@ -775,44 +640,9 @@ ngx_http_auth_spnego_preserve_mutual_auth(ngx_http_request_t *r)
     if (value.data == NULL) {
         return NGX_ERROR;
     }
-
     ngx_snprintf(value.data, value.len, "Negotiate %V", &ctx->token_out_b64);
 
     if (ngx_http_auth_spnego_add_www_authenticate(r, &value, 1) != NGX_OK) {
-        return NGX_ERROR;
-    }
-
-    return NGX_DECLINED;
-}
-
-static ngx_int_t
-ngx_http_auth_spnego_precontent_preserve(ngx_http_request_t *r)
-{
-    ngx_int_t  rc;
-
-    if (r != r->main) {
-        return NGX_DECLINED;
-    }
-
-    rc = ngx_http_auth_spnego_preserve_mutual_auth(r);
-    if (rc == NGX_ERROR) {
-        return NGX_ERROR;
-    }
-
-    return NGX_DECLINED;
-}
-
-static ngx_int_t
-ngx_http_auth_spnego_header_filter(ngx_http_request_t *r)
-{
-    ngx_int_t  rc;
-
-    if (r != r->main) {
-        return ngx_http_next_header_filter(r);
-    }
-
-    rc = ngx_http_auth_spnego_preserve_mutual_auth(r);
-    if (rc == NGX_ERROR) {
         return NGX_ERROR;
     }
 
@@ -1985,15 +1815,10 @@ static ngx_int_t ngx_http_auth_spnego_handler(ngx_http_request_t *r) {
 
     ctx = ngx_http_get_module_ctx(r, ngx_http_auth_spnego_module);
     if (NULL == ctx) {
-        ctx = ngx_palloc(r->pool, sizeof(ngx_http_auth_spnego_ctx_t));
+        ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_auth_spnego_ctx_t));
         if (NULL == ctx) {
             return NGX_HTTP_INTERNAL_SERVER_ERROR;
         }
-        ctx->token.len = 0;
-        ctx->token.data = NULL;
-        ctx->token_out_b64.len = 0;
-        ctx->token_out_b64.data = NULL;
-        ctx->head = 0;
         ctx->ret = NGX_HTTP_UNAUTHORIZED;
         ngx_http_set_ctx(r, ctx, ngx_http_auth_spnego_module);
     }
@@ -2076,25 +1901,24 @@ static ngx_int_t ngx_http_auth_spnego_handler(ngx_http_request_t *r) {
         spnego_debug0("GSSAPI auth succeeded");
     }
 
-    ngx_str_t *token_out_b64 = NULL;
     switch (ret) {
     case NGX_DECLINED: /* DECLINED, but not yet FORBIDDEN */
         ctx->ret = NGX_HTTP_UNAUTHORIZED;
+        if (NGX_ERROR == ngx_http_auth_spnego_headers(r, ctx, NULL, alcf)) {
+            spnego_debug0("Error setting headers");
+            ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
         break;
     case NGX_OK:
         ctx->ret = NGX_OK;
-        token_out_b64 = &ctx->token_out_b64;
+        /* WWW-Authenticate: Negotiate <token> is emitted by the output header
+         * filter, which runs after nginx's satisfy-any WWW-Authenticate
+         * cleanup, so the mutual-auth token survives satisfy any. */
         break;
     case NGX_ERROR:
     default:
         ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR;
         break;
-    }
-
-    if (NGX_ERROR ==
-        ngx_http_auth_spnego_headers(r, ctx, token_out_b64, alcf)) {
-        spnego_debug0("Error setting headers");
-        ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
     spnego_debug3("SSO auth handling OUT: token.len=%d, head=%d, ret=%d",

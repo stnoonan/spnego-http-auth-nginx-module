@@ -130,20 +130,14 @@ nginx clears `WWW-Authenticate` on successful auth when `satisfy any` is
 enabled, which breaks SPNEGO mutual authentication (the server token must be
 returned on the final 2xx response). See [nginx#861](https://github.com/nginx/nginx/issues/861).
 
-This module registers an output header filter (enabled by default) to restore
-the mutual-auth token when nginx strips it:
+On success, the module stores the GSS output token and adds
+`WWW-Authenticate: Negotiate <token>` in an output header filter, which runs
+after nginx's satisfy-any cleanup. Challenge headers for 401 responses are still
+set in the access handler.
 
-    auth_gss_preserve_mutual_auth on;   # default
-    auth_gss_preserve_mutual_auth off;  # disable if nginx is patched
-
-This workaround does not fix combining `auth_basic` and `auth_gss` under
-`satisfy any` when Basic auth fails after SPNEGO succeeds (final 401). Avoid
-using both in the same `satisfy any` context for mutual auth.
-
-The `return` directive is evaluated in the rewrite phase before the access
-phase, so `auth_gss` does not run for `return 200 "body"` in the same location.
-Serve content via `alias`, `root`, or a proxied upstream after authentication
-instead.
+Combining `auth_basic` and `auth_gss` under `satisfy any` when Basic auth fails
+after SPNEGO succeeds can still yield a final 401 without the mutual-auth token.
+Avoid using both in the same `satisfy any` context for mutual auth.
 
 These options affect the operation of basic authentication:
 * `auth_gss_realm`: Kerberos realm name.  If this is specified, the realm is
