@@ -448,7 +448,16 @@ server {
                 fastcgi_param KRB5CCNAME \$krb5_cc_name;
                 auth_gss_service_ccache /tmp/krb5cc_nginx;
                 auth_gss_delegate_credentials on;
-                auth_gss_constrained_delegation on;
+		auth_gss_constrained_delegation on;
+	}
+
+	location /satisfyany {
+		satisfy any;
+		auth_gss on;
+		auth_gss_realm ${KERBEROS_REALM};
+		auth_gss_keytab /etc/krb5.http.keytab;
+		auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+		auth_gss_allow_basic_fallback off;
 	}
 }
 EOF
@@ -504,6 +513,10 @@ then
 	die
 fi
 echo "OK"
+
+
+printf "Writing satisfyany static file ... "
+echo "OK" > /var/www/kerberos/satisfyany && echo "OK" || die
 
 
 printf "Writing delegate.php ... "
@@ -656,6 +669,27 @@ test_basic()
 
 }
 
+test_negotiate_token()
+{
+	SUBURL="$1"
+	TMPHEADERS="$(mktemp)"
+
+	printf "curl %s, negotiate: WWW-Authenticate token in 200=" "${SUBURL}"
+	rm -f "${CURL_OUTPUT}"
+	$CURL_NEGOTIATE -D "${TMPHEADERS}" -o "${CURL_OUTPUT}" \
+		"http://${TEST_HOST_FQDN}:8080/${SUBURL}" || true
+
+	# -D captures headers from all responses (401 then 200); the 401 has
+	# "Negotiate" with no token, the 200 should have "Negotiate <token>".
+	if grep -qi "^WWW-Authenticate: Negotiate [A-Za-z0-9+/]" "${TMPHEADERS}"; then
+		echo "OK"
+	else
+		EX=1
+		echo "FAILED"
+	fi
+	rm -f "${TMPHEADERS}"
+}
+
 test_ldapwhoami()
 {
 	LDAP_EXPECTED="dn:uid=${1},cn=gss-spnego,cn=auth"
@@ -700,8 +734,10 @@ test_basic "fallback.php" 401 200
 test_path "fallback.php" 401 403
 test_path "noauth.php" 200 200
 test_path "auth.php" 401 200
-test_path "delegate.php" 401 200
-test_ldapwhoami "alice"
+	test_path "delegate.php" 401 200
+	test_ldapwhoami "alice"
+	test_path "satisfyany" 401 200
+	test_negotiate_token "satisfyany"
 
 
 echo ""
