@@ -72,8 +72,8 @@
 #define spnego_debug3(msg, one, two, three)                                    \
     ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, msg, one, two,   \
                    three)
-#define spnego_log_error(fmt, args...)                                         \
-    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, fmt, ##args)
+#define spnego_log_error(fmt, ...)                                             \
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, fmt, ##__VA_ARGS__)
 
 /* Module handler */
 static ngx_int_t ngx_http_auth_spnego_handler(ngx_http_request_t *);
