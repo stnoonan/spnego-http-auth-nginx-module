@@ -598,12 +598,8 @@ static ngx_int_t ngx_http_auth_spnego_get_handler(ngx_http_request_t *r,
 static ngx_int_t ngx_http_auth_spnego_set_variable(ngx_http_request_t *r,
                                                    ngx_str_t *name,
                                                    ngx_str_t *value) {
-    u_char *lowercase = ngx_palloc(r->pool, name->len);
-    if (lowercase == NULL) {
-        return NGX_ERROR;
-    }
-
-    ngx_uint_t key = ngx_hash_strlow(lowercase, name->data, name->len);
+    /* All callers pass static lowercase string literals */
+    ngx_uint_t key = ngx_hash_key(name->data, name->len);
 
     ngx_http_variable_value_t *v = ngx_http_get_variable(r, name, key);
 
