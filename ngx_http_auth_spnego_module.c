@@ -835,10 +835,6 @@ ngx_int_t ngx_http_auth_spnego_token(ngx_http_request_t *r,
 
     if (token.len < nego_sz ||
         ngx_strncasecmp(token.data, (u_char *)"Negotiate ", nego_sz) != 0) {
-        if (ngx_strncasecmp(token.data, (u_char *)"NTLM", sizeof("NTLM")) ==
-            0) {
-            spnego_log_error("Detected unsupported mechanism: NTLM");
-        }
         return NGX_DECLINED;
     }
 
