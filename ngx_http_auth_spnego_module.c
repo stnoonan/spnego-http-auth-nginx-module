@@ -72,8 +72,8 @@
 #define spnego_debug3(msg, one, two, three)                                    \
     ngx_log_debug3(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, msg, one, two,   \
                    three)
-#define spnego_log_error(fmt, args...)                                         \
-    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, fmt, ##args)
+#define spnego_log_error(fmt, ...)                                             \
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, fmt, ##__VA_ARGS__)
 
 /* Module handler */
 static ngx_int_t ngx_http_auth_spnego_handler(ngx_http_request_t *);
@@ -598,12 +598,8 @@ static ngx_int_t ngx_http_auth_spnego_get_handler(ngx_http_request_t *r,
 static ngx_int_t ngx_http_auth_spnego_set_variable(ngx_http_request_t *r,
                                                    ngx_str_t *name,
                                                    ngx_str_t *value) {
-    u_char *lowercase = ngx_palloc(r->pool, name->len);
-    if (lowercase == NULL) {
-        return NGX_ERROR;
-    }
-
-    ngx_uint_t key = ngx_hash_strlow(lowercase, name->data, name->len);
+    /* All callers pass static lowercase string literals */
+    ngx_uint_t key = ngx_hash_key(name->data, name->len);
 
     ngx_http_variable_value_t *v = ngx_http_get_variable(r, name, key);
 
@@ -835,10 +831,6 @@ ngx_int_t ngx_http_auth_spnego_token(ngx_http_request_t *r,
 
     if (token.len < nego_sz ||
         ngx_strncasecmp(token.data, (u_char *)"Negotiate ", nego_sz) != 0) {
-        if (ngx_strncasecmp(token.data, (u_char *)"NTLM", sizeof("NTLM")) ==
-            0) {
-            spnego_log_error("Detected unsupported mechanism: NTLM");
-        }
         return NGX_DECLINED;
     }
 

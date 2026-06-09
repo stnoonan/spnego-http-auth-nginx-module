@@ -48,7 +48,7 @@ jobs:
           cd /usr/share/nginx/src
           . ./conf_flags
           ./configure                                                         \
-            --with-cc-opt="-fPIC"                                             \
+            --with-cc-opt="-fPIC -pedantic"                                   \
             --with-ld-opt="-Wl,-z,relro"                                      \
             "${NGX_CONF_FLAGS[@]}"                                            \
             --add-dynamic-module="${{ github.workspace }}"                    \
