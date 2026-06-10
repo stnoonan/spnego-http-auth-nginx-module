@@ -1888,7 +1888,7 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t *r,
         if (GSS_ERROR(major_status)) {
             spnego_log_error("%s", get_gss_error(r->pool, minor_status,
                                                  "gss_localname() failed"));
-            spnego_error(NGX_ERROR);
+            spnego_error(NGX_DECLINED);
         }
     }
 
