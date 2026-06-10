@@ -862,7 +862,7 @@ ngx_int_t ngx_http_auth_spnego_token(ngx_http_request_t *r,
 
     ctx->token.len = decoded.len;
     ctx->token.data = decoded.data;
-    spnego_debug2("Token (base64): %*s", token.len, token.data);
+    spnego_debug1("Token (base64), length: %uz", token.len);
 
     return NGX_OK;
 }
