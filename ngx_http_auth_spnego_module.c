@@ -130,13 +130,21 @@ typedef struct {
 
 /* per request */
 typedef struct {
-    ngx_str_t token;         /* decoded Negotiate token */
-    ngx_int_t head;          /* non-zero flag if headers set */
-    ngx_int_t ret;           /* current return code */
-    ngx_str_t token_out_b64; /* base64 encoded output token */
+    ngx_str_t token;             /* decoded Negotiate token */
+    ngx_int_t head;              /* non-zero flag if headers set */
+    ngx_int_t ret;               /* current return code */
+    ngx_str_t token_out_b64;     /* base64 encoded output token */
+    ngx_str_t user;              /* authenticated username */
+    ngx_str_t authorization_set; /* copy of the header value after login */
+    ngx_str_t ccache;            /* delegated cache name, kept across refusals */
+    ngx_uint_t redirected;       /* the saved login reached another access check */
+    ngx_uint_t uri_changes;      /* r->uri_changes when saved or last reused */
+    ngx_table_elt_t *challenge;  /* challenge kept across redirects */
+    ngx_str_t challenge_value;   /* detects a reused header list entry */
+    struct ngx_http_auth_spnego_loc_conf_s *alcf; /* NULL discards the login */
 } ngx_http_auth_spnego_ctx_t;
 
-typedef struct {
+typedef struct ngx_http_auth_spnego_loc_conf_s {
     ngx_flag_t protect;               /* auth_gss on/off */
     ngx_str_t realm;                  /* Kerberos realm */
     ngx_str_t keytab;                 /* keytab path (config value) */
@@ -162,6 +170,16 @@ typedef struct {
 
 static void ngx_http_auth_spnego_strip_realm(ngx_http_request_t *,
                                              ngx_http_auth_spnego_loc_conf_t *);
+static bool ngx_http_auth_spnego_same_authorization(ngx_http_request_t *,
+                                                    ngx_http_auth_spnego_ctx_t *);
+static bool ngx_http_auth_spnego_same_auth(ngx_http_auth_spnego_ctx_t *,
+                                          ngx_http_auth_spnego_loc_conf_t *);
+static ngx_http_auth_spnego_ctx_t *
+ngx_http_auth_spnego_get_ctx(ngx_http_request_t *);
+static ngx_http_auth_spnego_ctx_t *
+ngx_http_auth_spnego_saved_ccache(ngx_http_request_t *);
+static bool ngx_spnego_authorized_principal(ngx_http_request_t *, ngx_str_t *,
+                                            ngx_http_auth_spnego_loc_conf_t *);
 
 #define SPNEGO_NGX_CONF_FLAGS                                                  \
     NGX_HTTP_MAIN_CONF                                                         \
@@ -588,35 +606,137 @@ static char *ngx_http_auth_spnego_merge_loc_conf(ngx_conf_t *cf, void *parent,
 }
 
 
+/* nginx has stored values only for variables indexed by the configuration. */
+static ngx_http_variable_value_t *
+ngx_http_auth_spnego_indexed_variable(ngx_http_request_t *r, ngx_str_t *name) {
+    ngx_http_core_main_conf_t *cmcf;
+    ngx_http_variable_t *var;
+
+    cmcf = ngx_http_get_module_main_conf(r, ngx_http_core_module);
+    var = ngx_hash_find(&cmcf->variables_hash,
+                        ngx_hash_key(name->data, name->len),
+                        name->data, name->len);
+    if (var != NULL && (var->flags & NGX_HTTP_VAR_INDEXED)) {
+        return &r->variables[var->index];
+    }
+    return NULL;
+}
+
+
+/* A public subrequest keeps credentials even if its parent refuses them. */
+static ngx_http_auth_spnego_loc_conf_t *
+ngx_http_auth_spnego_ccache_conf(ngx_http_request_t *r) {
+    ngx_http_auth_spnego_loc_conf_t *alcf;
+
+    alcf = ngx_http_get_module_loc_conf(r, ngx_http_auth_spnego_module);
+    if (alcf->protect) {
+        alcf = ngx_http_get_module_loc_conf(r->main, ngx_http_auth_spnego_module);
+    }
+    return alcf;
+}
+
+
+/* Subrequests share the main request's variables. Before a destination's
+ * access check, its settings and principal list decide whether it may read
+ * the saved credentials. A filter can also clear the context, without a
+ * redirect: uri_changes distinguishes that case and keeps the direct result. */
+static ngx_http_auth_spnego_ctx_t *
+ngx_http_auth_spnego_ccache_ctx(ngx_http_request_t *r) {
+    ngx_http_auth_spnego_ctx_t *ctx;
+    ngx_http_auth_spnego_loc_conf_t *alcf;
+
+    ctx = ngx_http_get_module_ctx(r->main, ngx_http_auth_spnego_module);
+    alcf = ngx_http_auth_spnego_ccache_conf(r);
+    if (!alcf->protect) {
+        return ngx_http_auth_spnego_saved_ccache(r);
+    }
+    if (ctx != NULL) {
+        if (!ctx->redirected || ctx->ret == NGX_OK) {
+            return ctx;
+        }
+        return NULL;
+    }
+
+    ctx = ngx_http_auth_spnego_saved_ccache(r);
+    if (ctx == NULL) {
+        return NULL;
+    }
+    if (ctx->uri_changes == r->main->uri_changes) {
+        if (!ctx->redirected || ctx->ret == NGX_OK) {
+            return ctx;
+        }
+        return NULL;
+    }
+    if (!ngx_http_auth_spnego_same_authorization(r->main, ctx)
+        || !ngx_http_auth_spnego_same_auth(ctx, alcf)
+        || !ngx_spnego_authorized_principal(r->main, &ctx->user, alcf)) {
+        return NULL;
+    }
+    return ctx;
+}
+
+
+/* Indexed results stay invalid so reads after a redirect recheck access.
+ * The default no_cacheable value preserves auth_request_set assignments. */
 static ngx_int_t ngx_http_auth_spnego_get_handler(ngx_http_request_t *r,
                                                   ngx_http_variable_value_t *v,
                                                   uintptr_t data) {
+    ngx_str_t name = ngx_string(CCACHE_VARIABLE_NAME);
+    ngx_http_variable_value_t *stored;
+    ngx_http_auth_spnego_ctx_t *ctx;
+    ngx_http_core_main_conf_t *cmcf;
+
+    stored = ngx_http_auth_spnego_indexed_variable(r, &name);
+    ctx = ngx_http_get_module_ctx(r->main, ngx_http_auth_spnego_module);
+    if (v != stored) {
+        if (ctx != NULL && !ctx->redirected) {
+            return NGX_OK;
+        }
+        if (ctx == NULL && (ngx_http_auth_spnego_saved_ccache(r) == NULL)) {
+            return NGX_OK;
+        }
+    }
+
+    cmcf = ngx_http_get_module_main_conf(r, ngx_http_core_module);
+    /* Server rewrite precedes destination selection, so access cannot be
+     * checked yet. ngx_http_init_phase_handlers() sets location_rewrite_index
+     * even when no location rewrite handlers are registered. */
+    if (r->phase_handler < (ngx_int_t) cmcf->phase_engine.location_rewrite_index) {
+        ctx = ngx_http_auth_spnego_saved_ccache(r);
+    } else {
+        ctx = ngx_http_auth_spnego_ccache_ctx(r);
+    }
+    *v = ngx_http_variable_null_value;
+    if (ctx != NULL && ctx->ccache.data != NULL) {
+        v->len = ctx->ccache.len;
+        v->data = ctx->ccache.data;
+    }
+    if (v == stored) {
+        /* Indexed reads must call the getter again after a redirect. */
+        v->valid = 0;
+    }
     return NGX_OK;
 }
 
 
+/* Keep the module's variable with its login so a refusal cannot destroy the
+ * name needed by a later accepting destination. Invalidate indexed storage
+ * so a redirect cannot bypass the getter's checks. */
 static ngx_int_t ngx_http_auth_spnego_set_variable(ngx_http_request_t *r,
                                                    ngx_str_t *name,
                                                    ngx_str_t *value) {
-    u_char *lowercase = ngx_palloc(r->pool, name->len);
-    if (lowercase == NULL) {
-        return NGX_ERROR;
+    ngx_http_auth_spnego_ctx_t *ctx;
+    ngx_http_variable_value_t *v;
+
+    ctx = ngx_http_get_module_ctx(r, ngx_http_auth_spnego_module);
+    if (ctx != NULL) {
+        ctx->ccache = *value;
+        v = ngx_http_auth_spnego_indexed_variable(r, name);
+        if (v != NULL) {
+            *v = ngx_http_variable_null_value;
+            v->valid = 0;
+        }
     }
-
-    ngx_uint_t key = ngx_hash_strlow(lowercase, name->data, name->len);
-
-    ngx_http_variable_value_t *v = ngx_http_get_variable(r, name, key);
-
-    if (v == NULL) {
-        return NGX_ERROR;
-    }
-
-    v->len = value->len;
-    v->data = value->data;
-    v->valid = 1;
-    v->not_found = 0;
-    v->no_cacheable = 1;
-
     return NGX_OK;
 }
 
@@ -662,6 +782,79 @@ static ngx_int_t ngx_http_auth_spnego_init(ngx_conf_t *cf) {
 }
 
 
+/*
+ * This function exists only to identify the cleanup entry holding our
+ * saved context. After an internal redirect, ngx_http_auth_spnego_get_ctx()
+ * finds that entry by comparing its handler to this function's address.
+ * The body is deliberately empty because nginx frees the context memory
+ * when it destroys the request pool. Note that nginx does something similar
+ * with its ngx_http_realip_get_module_ctx() function in
+ * src/http/modules/ngx_http_realip_module.c.
+ */
+static void
+ngx_http_auth_spnego_cleanup(void *data) {
+}
+
+
+/* Only saved logins are recovered here. An attached context may describe a
+ * failed attempt, and must not replace a saved login in variable reads. */
+static ngx_http_auth_spnego_ctx_t *
+ngx_http_auth_spnego_get_ctx(ngx_http_request_t *r) {
+    ngx_http_auth_spnego_ctx_t *ctx;
+    ngx_pool_cleanup_t *cln;
+
+    for (cln = r->pool->cleanup; cln; cln = cln->next) {
+        if (cln->handler == ngx_http_auth_spnego_cleanup) {
+            ctx = cln->data;
+            if (ctx->alcf != NULL) {
+                return ctx;
+            }
+        }
+    }
+
+    return NULL;
+}
+
+
+/* Discarded logins cannot authenticate again, but public destinations keep
+ * their delegated credentials. Server rewrite precedes location selection. */
+static ngx_http_auth_spnego_ctx_t *
+ngx_http_auth_spnego_saved_ccache(ngx_http_request_t *r) {
+    ngx_http_auth_spnego_ctx_t *ctx;
+    ngx_http_auth_spnego_loc_conf_t *alcf;
+    ngx_http_core_main_conf_t *cmcf;
+    ngx_pool_cleanup_t *cln;
+
+    ctx = ngx_http_get_module_ctx(r->main, ngx_http_auth_spnego_module);
+    if (ctx != NULL && ctx->ccache.data != NULL) {
+        return ctx;
+    }
+    ctx = ngx_http_auth_spnego_get_ctx(r);
+    if (ctx != NULL) {
+        return ctx;
+    }
+    alcf = ngx_http_auth_spnego_ccache_conf(r);
+    cmcf = ngx_http_get_module_main_conf(r, ngx_http_core_module);
+    /* After an internal redirect, server rewrite uses the server configuration.
+     * Check protect only after destination selection at location rewrite.
+     * location_rewrite_index is set even without location rewrite handlers. */
+    if (alcf->protect
+        && r->phase_handler
+           >= (ngx_int_t) cmcf->phase_engine.location_rewrite_index) {
+        return NULL;
+    }
+    for (cln = r->pool->cleanup; cln; cln = cln->next) {
+        if (cln->handler == ngx_http_auth_spnego_cleanup) {
+            ctx = cln->data;
+            if (ctx->alcf == NULL && ctx->ccache.data != NULL) {
+                return ctx;
+            }
+        }
+    }
+    return NULL;
+}
+
+
 static ngx_int_t
 ngx_http_auth_spnego_header_filter(ngx_http_request_t *r)
 {
@@ -672,6 +865,15 @@ ngx_http_auth_spnego_header_filter(ngx_http_request_t *r)
 
     if (ctx == NULL || ctx->ret != NGX_OK || ctx->token_out_b64.len == 0) {
         return ngx_http_next_header_filter(r);
+    }
+
+    /* After a redirect, 401 and 403 describe the destination's challenge or
+     * refusal, so they do not carry the saved login's reply token. */
+    if (ctx->redirected) {
+        if (r->headers_out.status    == NGX_HTTP_UNAUTHORIZED
+            || r->headers_out.status == NGX_HTTP_FORBIDDEN) {
+            return ngx_http_next_header_filter(r);
+        }
     }
 
     value.len = sizeof("Negotiate ") - 1 + ctx->token_out_b64.len;
@@ -1951,103 +2153,308 @@ end:
 }
 
 
-static ngx_int_t ngx_http_auth_spnego_handler(ngx_http_request_t *r) {
-    ngx_int_t ret = NGX_DECLINED;
-    ngx_http_auth_spnego_ctx_t *ctx;
-    ngx_http_auth_spnego_loc_conf_t *alcf;
+static bool
+ngx_http_auth_spnego_same_string(ngx_str_t *a, ngx_str_t *b) {
+    if (a->len != b->len) {
+        return false;
+    }
+    if (a->len == 0) {
+        return true;
+    }
+    if (ngx_strncmp(a->data, b->data, a->len) != 0) {
+        return false;
+    }
+    return true;
+}
 
-    alcf = ngx_http_get_module_loc_conf(r, ngx_http_auth_spnego_module);
 
-    if (alcf->protect == 0) {
-        return NGX_DECLINED;
+/*
+ * Given the location of the saved login a and the destination b, reusing
+ * the login requires the same values for every setting the login path reads:
+ * 1. The same username handling (realm formatting and local name mapping).
+ * 2. The same authentication requirements (realm, keytab, service principal,
+ *    and channel binding).
+ * 3. The same credential delegation settings, including the service
+ *    credential cache path when constrained delegation is enabled.
+ * 4. Basic allowed at b when the saved login was a Basic login.
+ *
+ * Different settings get b's normal challenge instead of a check of the
+ * bogus basic auth header.
+ */
+static bool
+ngx_http_auth_spnego_same_auth(ngx_http_auth_spnego_ctx_t *ctx,
+                               ngx_http_auth_spnego_loc_conf_t *b) {
+    ngx_http_auth_spnego_loc_conf_t *a = ctx->alcf;
+
+    if (a->fqun                      != b->fqun
+        || a->force_realm            != b->force_realm
+        || a->map_to_local           != b->map_to_local
+        || !ngx_http_auth_spnego_same_string(&a->realm, &b->realm)
+        || !ngx_http_auth_spnego_same_string(&a->keytab, &b->keytab)
+        || a->channel_binding        != b->channel_binding
+        || a->delegate_credentials   != b->delegate_credentials
+        || a->constrained_delegation != b->constrained_delegation) {
+        return false;
     }
 
-    ctx = ngx_http_get_module_ctx(r, ngx_http_auth_spnego_module);
-    if (ctx == NULL) {
-        ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_auth_spnego_ctx_t));
-        if (ctx == NULL) {
-            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    /* An empty token marks a Basic login, which needs Basic allowed at b. */
+    if (ctx->token.len == 0 && !b->allow_basic) {
+        return false;
+    }
+
+    if (a->constrained_delegation) {
+        if (!ngx_http_auth_spnego_same_string(&a->service_ccache,
+                                              &b->service_ccache)) {
+            return false;
         }
-        ctx->ret = NGX_HTTP_UNAUTHORIZED;
-        ngx_http_set_ctx(r, ctx, ngx_http_auth_spnego_module);
     }
 
-    spnego_debug3("SSO auth handling IN: token.len=%d, head=%d, ret=%d",
-                  ctx->token.len, ctx->head, ctx->ret);
+    if (a->service_principal == b->service_principal) {
+        return true;
+    }
+    if (a->service_principal == NULL || b->service_principal == NULL) {
+        return false;
+    }
+    if (ngx_strcmp(a->service_principal, b->service_principal) != 0) {
+        return false;
+    }
+    return true;
+}
 
-    if (ctx->token.len && ctx->head) {
-        spnego_debug1("Found token and head, returning %d", ctx->ret);
+
+/*
+ * Whether the authorization header still holds the value it had right after
+ * the saved login. Another module may have changed or removed it since.
+ * Compare the content with a copy, not the data pointer: a module can
+ * change the bytes in place or set the length to 0 while the pointer stays
+ * the same, and the saved login would then be reused for credentials it
+ * never checked.
+ */
+static bool
+ngx_http_auth_spnego_same_authorization(ngx_http_request_t *r,
+                                        ngx_http_auth_spnego_ctx_t *ctx) {
+    ngx_table_elt_t *h = r->headers_in.authorization;
+
+    if (h == NULL || (h->value.len != ctx->authorization_set.len)) {
+        return false;
+    }
+    if (ngx_memcmp(h->value.data, ctx->authorization_set.data,
+                   h->value.len) != 0) {
+        return false;
+    }
+    return true;
+}
+
+
+/* Remove the saved login's challenge. ngx_http_auth_spnego_restore_login
+ * decides whether to keep it for a retained 401. nginx can reuse a header
+ * list entry after clearing headers, so both the name and saved value must
+ * match before suppressing it. */
+static void
+ngx_http_auth_spnego_clear_challenge(ngx_http_request_t *r,
+                                     ngx_http_auth_spnego_ctx_t *ctx) {
+    ngx_table_elt_t *h = ctx->challenge;
+
+    if (h == NULL) {
+        return;
+    }
+    if (h->key.len       == sizeof("WWW-Authenticate") - 1
+        && ngx_strncasecmp(h->key.data, (u_char *)"WWW-Authenticate",
+                           sizeof("WWW-Authenticate") - 1) == 0
+        && h->value.data == ctx->challenge_value.data
+        && h->value.len  == ctx->challenge_value.len) {
+        h->hash = 0;
+        if (r->headers_out.www_authenticate == h) {
+#if defined(nginx_version) && nginx_version >= 1023000
+            r->headers_out.www_authenticate = h->next;
+#else
+            r->headers_out.www_authenticate = NULL;
+#endif
+        }
+    }
+    ctx->challenge = NULL;
+}
+
+
+/* Changed settings cannot authenticate the saved login's bogus header.
+ * Keep the login for a later accepting location, but suppress its username
+ * and reply token here. Negotiate challenges bypass nginx's auth_delay,
+ * as in the ordinary authentication path. */
+static ngx_int_t
+ngx_http_auth_spnego_challenge_again(ngx_http_request_t *r,
+                                     ngx_http_auth_spnego_ctx_t *ctx,
+                                     ngx_http_auth_spnego_loc_conf_t *alcf) {
+    ngx_int_t ret;
+
+    ngx_http_auth_spnego_clear_challenge(r, ctx);
+    ngx_str_set(&r->headers_in.user, "");
+    if (alcf->allow_basic) {
+        ret = ngx_http_auth_spnego_headers_basic_only(r, ctx, alcf);
+    } else {
+        ret = ngx_http_auth_spnego_headers(r, ctx, NULL, alcf);
+    }
+    if (ret == NGX_ERROR) {
+        return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
+    }
+    ctx->challenge = r->headers_out.www_authenticate;
+    ctx->challenge_value = ctx->challenge->value;
+    if (alcf->allow_basic) {
+        return (ctx->ret = NGX_HTTP_UNAUTHORIZED);
+    }
+    ctx->ret = NGX_DONE;
+    ngx_http_finalize_request(r, NGX_HTTP_UNAUTHORIZED);
+    return NGX_DONE;
+}
+
+
+/* A saved login survives a refusal so an error_page destination can accept
+ * it. Its result must still describe this location, to withhold credentials
+ * and the reply token when this location refuses access. */
+static ngx_int_t
+ngx_http_auth_spnego_reuse_login(ngx_http_request_t *r,
+                                 ngx_http_auth_spnego_ctx_t *ctx,
+                                 ngx_http_auth_spnego_loc_conf_t *alcf) {
+    if (!ngx_http_auth_spnego_same_auth(ctx, alcf)) {
+        spnego_debug0("Authenticated under a different configuration");
+        return ngx_http_auth_spnego_challenge_again(r, ctx, alcf);
+    }
+
+    r->headers_in.user = ctx->user;
+    if (!ngx_spnego_authorized_principal(r, &r->headers_in.user, alcf)) {
+        spnego_debug0("User not authorized");
+        return (ctx->ret = NGX_HTTP_FORBIDDEN);
+    }
+    ctx->head = 0;
+    ctx->uri_changes = r->uri_changes;
+    spnego_debug0("Already authenticated");
+    return (ctx->ret = NGX_OK);
+}
+
+
+/* Record a login in the request pool because nginx clears module contexts
+ * on an internal redirect. Copy the header bytes so changes made in place
+ * are detected too. Publish the marker only after both allocations succeed. */
+static ngx_int_t
+ngx_http_auth_spnego_save_login(ngx_http_request_t *r,
+                                ngx_http_auth_spnego_ctx_t *ctx,
+                                ngx_http_auth_spnego_loc_conf_t *alcf) {
+    ngx_pool_cleanup_t *cln;
+    ngx_str_t authorization_set;
+
+    authorization_set = r->headers_in.authorization->value;
+    authorization_set.data = ngx_pstrdup(r->pool, &authorization_set);
+    if (authorization_set.data == NULL) {
+        return NGX_ERROR;
+    }
+
+    cln = ngx_pool_cleanup_add(r->pool, 0);
+    if (cln == NULL) {
+        return NGX_ERROR;
+    }
+    ctx->user = r->headers_in.user;
+    ctx->authorization_set = authorization_set;
+    ctx->alcf = alcf;
+    ctx->uri_changes = r->uri_changes;
+    cln->data = ctx;
+    cln->handler = ngx_http_auth_spnego_cleanup;
+    return NGX_OK;
+}
+
+
+/* Save before authorization so an error_page after a 403 can reuse the
+ * login. The caller keeps the refusal as this location's result. */
+static ngx_int_t
+ngx_http_auth_spnego_save_and_authorize(ngx_http_request_t *r,
+                                        ngx_http_auth_spnego_ctx_t *ctx,
+                                        ngx_http_auth_spnego_loc_conf_t *alcf) {
+    if (ngx_http_auth_spnego_save_login(r, ctx, alcf) != NGX_OK) {
+        return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
+    }
+    if (!ngx_spnego_authorized_principal(r, &r->headers_in.user,
+                                         alcf)) {
+        spnego_debug0("User not authorized");
+        return (ctx->ret = NGX_HTTP_FORBIDDEN);
+    }
+    return NGX_OK;
+}
+
+
+/* Basic credentials get their own result, including a Basic only challenge
+ * on failure. They must not continue into Negotiate authentication. */
+static ngx_int_t
+ngx_http_auth_spnego_basic_handler(ngx_http_request_t *r,
+                                   ngx_http_auth_spnego_ctx_t *ctx,
+                                   ngx_http_auth_spnego_loc_conf_t *alcf) {
+    if (NGX_OK != ngx_http_auth_spnego_basic(r, ctx, alcf)) {
+        spnego_debug0("Basic auth failed");
+        if (ngx_http_auth_spnego_headers_basic_only(r, ctx, alcf) ==
+            NGX_ERROR) {
+            spnego_debug0("Error setting headers");
+            return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
+        }
+
+        return (ctx->ret = NGX_HTTP_UNAUTHORIZED);
+    }
+
+    if (ngx_http_auth_spnego_save_and_authorize(r, ctx, alcf) != NGX_OK) {
         return ctx->ret;
     }
+    spnego_debug0("Basic auth succeeded");
+    return (ctx->ret = NGX_OK);
+}
 
-    if (ctx->ret == NGX_OK) {
-        spnego_debug0("Already authenticated");
-        return NGX_OK;
+
+/* Keep authentication failure separate from an absent Negotiate token:
+ * only a supplied token can produce a Basic only challenge here. */
+static ngx_int_t
+ngx_http_auth_spnego_gss_handler(ngx_http_request_t *r,
+                                 ngx_http_auth_spnego_ctx_t *ctx,
+                                 ngx_http_auth_spnego_loc_conf_t *alcf) {
+    ngx_int_t ret;
+
+    spnego_debug0("Client sent a reasonable Negotiate header");
+    ret = ngx_http_auth_spnego_auth_user_gss(r, ctx, alcf);
+    if (ret == NGX_ERROR) {
+        spnego_debug0("GSSAPI failed");
+        return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
     }
-
-    spnego_debug0("Begin auth");
-
-    if (alcf->allow_basic) {
-        spnego_debug0("Detect basic auth");
-        ret = ngx_http_auth_basic_user(r);
-        if (ret == NGX_OK) {
-            spnego_debug0("Basic auth credentials supplied by client");
-            /* If basic auth is enabled and basic creds are supplied
-             * attempt basic auth.  If we attempt basic auth, we do
-             * not fall through to real SPNEGO */
-            if (NGX_OK != ngx_http_auth_spnego_basic(r, ctx, alcf)) {
-                spnego_debug0("Basic auth failed");
-                if (ngx_http_auth_spnego_headers_basic_only(r, ctx, alcf) ==
-                    NGX_ERROR) {
-                    spnego_debug0("Error setting headers");
-                    return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
-                }
-
-                return (ctx->ret = NGX_HTTP_UNAUTHORIZED);
-            }
-
-            if (!ngx_spnego_authorized_principal(r, &r->headers_in.user,
-                                                 alcf)) {
-                spnego_debug0("User not authorized");
-                return (ctx->ret = NGX_HTTP_FORBIDDEN);
-            }
-
-            spnego_debug0("Basic auth succeeded");
-            return (ctx->ret = NGX_OK);
+    if (ret == NGX_DECLINED) {
+        spnego_debug0("GSSAPI failed");
+        if (!alcf->allow_basic) {
+            return (ctx->ret = NGX_HTTP_FORBIDDEN);
         }
+        if (ngx_http_auth_spnego_headers_basic_only(r, ctx, alcf) ==
+            NGX_ERROR) {
+            spnego_debug0("Error setting headers");
+            return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
+        }
+        /* finalize directly to bypass core auth_delay (not a credential failure) */
+        ngx_http_finalize_request(r, NGX_HTTP_UNAUTHORIZED);
+        return (ctx->ret = NGX_DONE);
     }
+
+    if (ngx_http_auth_spnego_save_and_authorize(r, ctx, alcf) != NGX_OK) {
+        return ctx->ret;
+    }
+    spnego_debug0("GSSAPI auth succeeded");
+    return ret;
+}
+
+
+static ngx_int_t
+ngx_http_auth_spnego_negotiate(ngx_http_request_t *r,
+                               ngx_http_auth_spnego_ctx_t *ctx,
+                               ngx_http_auth_spnego_loc_conf_t *alcf) {
+    ngx_int_t ret;
 
     /* Basic auth either disabled or not supplied by client */
     spnego_debug0("Detect SPNEGO token");
     ret = ngx_http_auth_spnego_token(r, ctx);
     if (ret == NGX_OK) {
-        spnego_debug0("Client sent a reasonable Negotiate header");
-        ret = ngx_http_auth_spnego_auth_user_gss(r, ctx, alcf);
-        if (ret == NGX_ERROR) {
-            spnego_debug0("GSSAPI failed");
-            return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
+        ret = ngx_http_auth_spnego_gss_handler(r, ctx, alcf);
+        if (ret != NGX_OK) {
+            return ctx->ret;
         }
-        if (ret == NGX_DECLINED) {
-            spnego_debug0("GSSAPI failed");
-            if (!alcf->allow_basic) {
-                return (ctx->ret = NGX_HTTP_FORBIDDEN);
-            }
-            if (ngx_http_auth_spnego_headers_basic_only(r, ctx, alcf) ==
-                NGX_ERROR) {
-                spnego_debug0("Error setting headers");
-                return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
-            }
-            /* finalize directly to bypass core auth_delay (not a credential failure) */
-            ngx_http_finalize_request(r, NGX_HTTP_UNAUTHORIZED);
-            return (ctx->ret = NGX_DONE);
-        }
-
-        if (!ngx_spnego_authorized_principal(r, &r->headers_in.user, alcf)) {
-            spnego_debug0("User not authorized");
-            return (ctx->ret = NGX_HTTP_FORBIDDEN);
-        }
-
-        spnego_debug0("GSSAPI auth succeeded");
     }
 
     switch (ret) {
@@ -2076,4 +2483,114 @@ static ngx_int_t ngx_http_auth_spnego_handler(ngx_http_request_t *r) {
     spnego_debug3("SSO auth handling OUT: token.len=%d, head=%d, ret=%d",
                   ctx->token.len, ctx->head, ctx->ret);
     return ctx->ret;
+}
+
+
+static ngx_int_t
+ngx_http_auth_spnego_authenticate(ngx_http_request_t *r,
+                                  ngx_http_auth_spnego_ctx_t *ctx,
+                                  ngx_http_auth_spnego_loc_conf_t *alcf,
+                                  bool allow_basic) {
+    ngx_int_t ret = NGX_DECLINED;
+
+    spnego_debug3("SSO auth handling IN: token.len=%d, head=%d, ret=%d",
+                  ctx->token.len, ctx->head, ctx->ret);
+
+    if (ctx->token.len && ctx->head) {
+        spnego_debug1("Found token and head, returning %d", ctx->ret);
+        return ctx->ret;
+    }
+    if (ctx->ret == NGX_OK) {
+        spnego_debug0("Already authenticated");
+        return NGX_OK;
+    }
+    spnego_debug0("Begin auth");
+
+    if (allow_basic) {
+        spnego_debug0("Detect basic auth");
+        ret = ngx_http_auth_basic_user(r);
+        if (ret == NGX_OK) {
+            spnego_debug0("Basic auth credentials supplied by client");
+            /* If basic auth is enabled and basic creds are supplied
+             * attempt basic auth.  If we attempt basic auth, we do
+             * not fall through to real SPNEGO */
+            return ngx_http_auth_spnego_basic_handler(r, ctx, alcf);
+        }
+    }
+    return ngx_http_auth_spnego_negotiate(r, ctx, alcf);
+}
+
+
+/* A fresh attempt preserves any username parsed before this module ran,
+ * as on a direct request. Discarding a saved login clears it separately. */
+static ngx_http_auth_spnego_ctx_t *
+ngx_http_auth_spnego_new_ctx(ngx_http_request_t *r) {
+    ngx_http_auth_spnego_ctx_t *ctx;
+
+    ctx = ngx_pcalloc(r->pool, sizeof(ngx_http_auth_spnego_ctx_t));
+    if (ctx == NULL) {
+        return NULL;
+    }
+    ctx->ret = NGX_HTTP_UNAUTHORIZED;
+    ngx_http_set_ctx(r, ctx, ngx_http_auth_spnego_module);
+    return ctx;
+}
+
+
+/* A changed header discards the saved login permanently. It still provides
+ * credentials to public destinations through ngx_http_auth_spnego_saved_ccache.
+ * If the header was removed, skip Basic parsing on this attempt: nginx's
+ * "no user" mark would prevent a later replacement header from being parsed
+ * after another redirect. */
+static ngx_int_t
+ngx_http_auth_spnego_restore_login(ngx_http_request_t *r,
+                                   ngx_http_auth_spnego_ctx_t *ctx,
+                                   ngx_http_auth_spnego_loc_conf_t *alcf) {
+    if (r->err_status != NGX_HTTP_UNAUTHORIZED) {
+        ngx_http_auth_spnego_clear_challenge(r, ctx);
+    }
+    ctx->redirected = 1;
+    ctx->ret = NGX_HTTP_UNAUTHORIZED;
+    if (ngx_http_auth_spnego_same_authorization(r, ctx)) {
+        ngx_http_set_ctx(r, ctx, ngx_http_auth_spnego_module);
+        return ngx_http_auth_spnego_reuse_login(r, ctx, alcf);
+    }
+
+    spnego_debug0("Authorization header changed after login");
+    ctx->alcf = NULL;
+    ngx_str_null(&r->headers_in.user);
+    ngx_str_null(&r->headers_in.passwd);
+    ctx = ngx_http_auth_spnego_new_ctx(r);
+    if (ctx == NULL) {
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+    if (r->headers_in.authorization == NULL) {
+        return ngx_http_auth_spnego_authenticate(r, ctx, alcf, false);
+    }
+    return ngx_http_auth_spnego_authenticate(r, ctx, alcf, alcf->allow_basic);
+}
+
+
+static ngx_int_t ngx_http_auth_spnego_handler(ngx_http_request_t *r) {
+    ngx_http_auth_spnego_ctx_t *ctx;
+    ngx_http_auth_spnego_loc_conf_t *alcf;
+
+    alcf = ngx_http_get_module_loc_conf(r, ngx_http_auth_spnego_module);
+
+    if (alcf->protect == 0) {
+        return NGX_DECLINED;
+    }
+
+    ctx = ngx_http_get_module_ctx(r, ngx_http_auth_spnego_module);
+    if (ctx == NULL) {
+        ctx = ngx_http_auth_spnego_get_ctx(r);
+        if (ctx != NULL) {
+            return ngx_http_auth_spnego_restore_login(r, ctx, alcf);
+        }
+        ctx = ngx_http_auth_spnego_new_ctx(r);
+        if (ctx == NULL) {
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+    }
+    return ngx_http_auth_spnego_authenticate(r, ctx, alcf, alcf->allow_basic);
 }

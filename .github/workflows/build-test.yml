@@ -31,6 +31,7 @@ jobs:
         run: |
           sudo eatmydata apt-get install                                      \
             nginx nginx-dev build-essential libkrb5-dev curl                  \
+            libnginx-mod-http-headers-more-filter                             \
             slapd ldap-utils                                                  \
             krb5-admin-server krb5-kdc krb5-kdc-ldap                          \
             libsasl2-modules-gssapi-mit                                       \
