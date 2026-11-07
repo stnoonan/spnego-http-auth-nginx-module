@@ -1019,8 +1019,6 @@ ngx_http_auth_spnego_store_delegated_creds(ngx_http_request_t *r,
     var_value.data = (u_char *)ccname;
     var_value.len = ngx_strlen(ccname);
 
-    ngx_http_auth_spnego_set_variable(r, &var_name, &var_value);
-
     ngx_pool_cleanup_t *cln = ngx_pool_cleanup_add(r->pool, 0);
     if (cln == NULL) {
         kerr = ENOMEM;
@@ -1030,6 +1028,8 @@ ngx_http_auth_spnego_store_delegated_creds(ngx_http_request_t *r,
     cln->handler = ngx_http_auth_spnego_krb5_destroy_ccache;
     cln->data = ccname;
     ccname_owned_by_cleanup = true;
+
+    ngx_http_auth_spnego_set_variable(r, &var_name, &var_value);
 done:
     if (principal)
         krb5_free_principal(kcontext, principal);
