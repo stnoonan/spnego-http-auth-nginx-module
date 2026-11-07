@@ -866,6 +866,54 @@ test_negotiate_token()
 }
 
 
+# SSI looks up variables by name. A separate configuration keeps krb5_cc_name
+# without indexed storage, which configuration references would allocate.
+printf "Creating nginx site for unindexed variable reads ... "
+cp /etc/nginx/sites-available/kerberos /tmp/kerberos-indexed.conf || die
+cat <<EOF > /etc/nginx/sites-available/kerberos || die
+server {
+	listen 8080;
+	server_name ${TEST_HOST_FQDN};
+	root /var/www/kerberos;
+	ssi on;
+	location = /unindexed.html {
+		auth_gss off;
+	}
+}
+EOF
+printf 'cache:[<!--#echo var="krb5_cc_name" encoding="none" -->]\n' > /var/www/kerberos/unindexed.html || die
+systemctl restart nginx || die
+echo "OK"
+printf "Checking configuration has no indexed krb5_cc_name reference ... "
+if grep -RFq '$krb5_cc_name' /etc/nginx/nginx.conf \
+	/etc/nginx/modules-enabled /etc/nginx/conf.d /etc/nginx/sites-enabled; then
+	die
+else
+	[ "$?" -eq 1 ] || die
+fi
+echo "OK"
+kinit -kt krb5.alice.keytab alice || die
+for SSI_PATH in unindexed.html; do
+	SSI_RC=0
+	SSI_CODE="$($CURL_NEGOTIATE -w '%{http_code}' \
+		"http://${TEST_HOST_FQDN}:8080/${SSI_PATH}")" || SSI_RC=$?
+	printf 'SSI %s: rc=%s status=%s body=' "${SSI_PATH}" "${SSI_RC}" "${SSI_CODE}"
+	cat "${CURL_OUTPUT}"
+	printf "SSI %s: empty cache body ... " "${SSI_PATH}"
+	if [ "${SSI_RC}" -eq 0 ] && [ "${SSI_CODE}" = 200 ] &&
+		[ "$(cat "${CURL_OUTPUT}")" = 'cache:[]' ]; then
+		echo "OK"
+	else
+		EX=1
+		echo "FAILED"
+	fi
+done
+printf "Restoring nginx site with indexed variable reads ... "
+mv /tmp/kerberos-indexed.conf /etc/nginx/sites-available/kerberos || die
+systemctl restart nginx || die
+echo "OK"
+
+
 printf "Destroying Kerberos tickets ... "
 kdestroy -q > /dev/null 2>&1 || true
 echo "OK"

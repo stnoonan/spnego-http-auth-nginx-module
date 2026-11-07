@@ -591,6 +591,17 @@ static char *ngx_http_auth_spnego_merge_loc_conf(ngx_conf_t *cf, void *parent,
 static ngx_int_t ngx_http_auth_spnego_get_handler(ngx_http_request_t *r,
                                                   ngx_http_variable_value_t *v,
                                                   uintptr_t data) {
+    ngx_str_t name = ngx_string(CCACHE_VARIABLE_NAME);
+    ngx_http_core_main_conf_t *cmcf;
+    ngx_http_variable_t *var;
+
+    cmcf = ngx_http_get_module_main_conf(r, ngx_http_core_module);
+    var = ngx_hash_find(&cmcf->variables_hash,
+                        ngx_hash_key(name.data, name.len), name.data, name.len);
+    /* Indexed reads must preserve the value saved by set_variable(). */
+    if (!(var->flags & NGX_HTTP_VAR_INDEXED)) {
+        *v = ngx_http_variable_null_value;
+    }
     return NGX_OK;
 }
 
