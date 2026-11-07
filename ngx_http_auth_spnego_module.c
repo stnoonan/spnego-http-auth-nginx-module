@@ -2038,8 +2038,9 @@ static ngx_int_t ngx_http_auth_spnego_handler(ngx_http_request_t *r) {
                 return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
             }
             /* finalize directly to bypass core auth_delay (not a credential failure) */
+            ctx->ret = NGX_DONE;
             ngx_http_finalize_request(r, NGX_HTTP_UNAUTHORIZED);
-            return (ctx->ret = NGX_DONE);
+            return NGX_DONE;
         }
 
         if (!ngx_spnego_authorized_principal(r, &r->headers_in.user, alcf)) {
@@ -2057,8 +2058,9 @@ static ngx_int_t ngx_http_auth_spnego_handler(ngx_http_request_t *r) {
             ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR;
         } else {
             /* finalize directly to bypass core auth_delay (not a credential failure) */
-            ngx_http_finalize_request(r, NGX_HTTP_UNAUTHORIZED);
             ctx->ret = NGX_DONE;
+            ngx_http_finalize_request(r, NGX_HTTP_UNAUTHORIZED);
+            return NGX_DONE;
         }
         break;
     case NGX_OK:
