@@ -996,6 +996,48 @@ test_ldapwhoami "alice"
 
 
 echo ""
+printf "Reloading nginx and waiting for old workers to exit ... "
+WORKERS_OLD="$(pgrep -P "$(cat /run/nginx.pid)")"
+[ -n "${WORKERS_OLD}" ] || die
+systemctl reload nginx || die
+# A rejected reload leaves the old workers serving the old configuration.
+I=0
+while [ "${I}" -lt 20 ]; do
+	sleep 1
+	I=$((I + 1))
+	OLD_GONE=yes
+	for PID in ${WORKERS_OLD}; do
+		if kill -0 "${PID}" 2>/dev/null; then
+			OLD_GONE=no
+		fi
+	done
+	[ "${OLD_GONE}" = yes ] && break
+done
+[ "${OLD_GONE}" = yes ] || die
+pgrep -P "$(cat /run/nginx.pid)" > /dev/null || die
+echo "OK"
+
+# Force the next constrained delegation request to obtain new server credentials.
+printf "Removing service ccache ... "
+[ -f /tmp/krb5cc_nginx ] && rm /tmp/krb5cc_nginx || die
+echo "OK"
+ERROR_LOG_SIZE="$(wc -c < /var/log/nginx/error.log)" || die
+test_path "delegate.php" 401 200
+test_ldapwhoami "alice"
+
+printf "Checking error.log for worker exits after reload ... "
+# Allow the master to log a worker exit after curl sees a closed connection.
+sleep 1
+ERROR_LOG_NEW="$(tail -c "+$((ERROR_LOG_SIZE + 1))" /var/log/nginx/error.log)" || die
+if printf "%s\n" "${ERROR_LOG_NEW}" | grep -E 'worker process [0-9]+ exited on signal'; then
+	EX=1
+	echo "FAILED"
+else
+	echo "OK"
+fi
+
+
+echo ""
 echo "=== Channel binding tests ==="
 echo ""
 
