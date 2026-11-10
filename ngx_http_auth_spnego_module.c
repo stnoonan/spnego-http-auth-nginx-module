@@ -118,7 +118,6 @@ static const char *get_gss_error(ngx_pool_t *p, OM_uint32 error_status, char *pr
     return (char *)(ngx_pstrdup(p, &str));
 }
 
-static ngx_shm_zone_t *shm_zone;
 static ngx_http_output_header_filter_pt ngx_http_next_header_filter;
 
 typedef enum { TYPE_KRB5_CREDS, TYPE_GSS_CRED_ID_T } creds_type;
@@ -147,6 +146,7 @@ typedef struct {
     ngx_str_t srvcname;               /* service principal name override */
     char *service_principal;          /* fully-qualified service principal */
     ngx_str_t shm_zone_name;          /* shared memory zone for cross-worker mutex */
+    ngx_shm_zone_t *shm_zone;          /* shared memory zone handle */
     ngx_flag_t fqun;                  /* include @realm in $remote_user */
     ngx_flag_t force_realm;           /* strip/replace principal's realm */
     ngx_flag_t allow_basic;           /* allow Basic auth fallback */
@@ -361,18 +361,18 @@ static ngx_int_t ngx_http_auth_spnego_init_shm_zone(ngx_shm_zone_t *shm_zone,
     return NGX_OK;
 }
 
-static ngx_int_t ngx_http_auth_spnego_create_shm_zone(ngx_conf_t *cf,
-                                                      ngx_str_t *name) {
-    if (shm_zone != NULL)
-        return NGX_OK;
+static ngx_int_t ngx_http_auth_spnego_create_shm_zone(
+    ngx_conf_t *cf, ngx_http_auth_spnego_loc_conf_t *conf) {
+    ngx_shm_zone_t *shm_zone;
 
-    shm_zone =
-        ngx_shared_memory_add(cf, name, 65536, &ngx_http_auth_spnego_module);
+    shm_zone = ngx_shared_memory_add(cf, &conf->shm_zone_name, 65536,
+                                     &ngx_http_auth_spnego_module);
     if (shm_zone == NULL) {
         return NGX_ERROR;
     }
 
     shm_zone->init = ngx_http_auth_spnego_init_shm_zone;
+    conf->shm_zone = shm_zone;
 
     return NGX_OK;
 }
@@ -388,8 +388,7 @@ static char *ngx_http_auth_spnego_merge_loc_conf(ngx_conf_t *cf, void *parent,
                              SHM_ZONE_NAME);
 
     if (conf->protect != 0) {
-        if (ngx_http_auth_spnego_create_shm_zone(cf, &conf->shm_zone_name) !=
-            NGX_OK) {
+        if (ngx_http_auth_spnego_create_shm_zone(cf, conf) != NGX_OK) {
             ngx_conf_log_error(
                 NGX_LOG_INFO, cf, 0,
                 "auth_spnego: failed to create shared memory zone");
@@ -1475,7 +1474,7 @@ done:
 
 
 static ngx_int_t ngx_http_auth_spnego_obtain_server_credentials(
-    ngx_http_request_t *r, const char *service_name,
+    ngx_http_request_t *r, ngx_shm_zone_t *shm_zone, const char *service_name,
     const char *keytab_prefix_path, const char *service_ccache_prefix_path) {
     krb5_context kcontext = NULL;
     krb5_keytab keytab = NULL;
@@ -1795,8 +1794,8 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t *r,
 
         if (alcf->constrained_delegation) {
             ngx_http_auth_spnego_obtain_server_credentials(
-                r, alcf->service_principal, alcf->keytab_prefix_path,
-                alcf->service_ccache_prefix_path);
+                r, alcf->shm_zone, alcf->service_principal,
+                alcf->keytab_prefix_path, alcf->service_ccache_prefix_path);
         }
 
         /* Obtain credentials */
