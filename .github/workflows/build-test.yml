@@ -11,9 +11,11 @@ jobs:
 
     # nginx-dev doesn't exist on releases before 24.04
     strategy:
+      fail-fast: false
       matrix:
         os:
           - ubuntu-24.04
+          - ubuntu-26.04
 
     runs-on: ${{ matrix.os }}
 
