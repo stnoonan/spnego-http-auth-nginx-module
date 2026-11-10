@@ -4,13 +4,13 @@ GSSAPI_CFLAGS=""
 GSSAPI_LIBS=""
 GSSAPI_FLAVOR="unknown"
 
-if pkg-config --exists mit-krb5-gssapi 2>/dev/null; then
-    GSSAPI_CFLAGS=$(pkg-config --cflags mit-krb5-gssapi)
-    GSSAPI_LIBS=$(pkg-config --libs mit-krb5-gssapi)
+if pkg-config --exists mit-krb5-gssapi mit-krb5 2>/dev/null; then
+    GSSAPI_CFLAGS=$(pkg-config --cflags mit-krb5-gssapi mit-krb5)
+    GSSAPI_LIBS=$(pkg-config --libs mit-krb5-gssapi mit-krb5)
     GSSAPI_FLAVOR="MIT"
-elif pkg-config --exists heimdal-gssapi 2>/dev/null; then
-    GSSAPI_CFLAGS=$(pkg-config --cflags heimdal-gssapi)
-    GSSAPI_LIBS=$(pkg-config --libs heimdal-gssapi)
+elif pkg-config --exists heimdal-gssapi heimdal-krb5 2>/dev/null; then
+    GSSAPI_CFLAGS=$(pkg-config --cflags heimdal-gssapi heimdal-krb5)
+    GSSAPI_LIBS=$(pkg-config --libs heimdal-gssapi heimdal-krb5)
     GSSAPI_FLAVOR="Heimdal"
 elif krb5-config --version >/dev/null 2>&1; then
     GSSAPI_CFLAGS=$(krb5-config --cflags gssapi)

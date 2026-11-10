@@ -62,6 +62,16 @@ jobs:
             -C "/usr/share/nginx/src"                                         \
             modules
 
+      - name: Check that the module links against libkrb5
+        run: |
+          # The module calls krb5_* functions directly, so it must link
+          # against libkrb5 itself rather than getting it indirectly via
+          # libgssapi_krb5; otherwise static (--add-module) builds fail
+          # with "DSO missing from command line" (issue #189).
+          so="${{ github.workspace }}/build/ngx_http_auth_spnego_module.so"
+          readelf -d "$so" | grep NEEDED
+          readelf -d "$so" | grep -q 'NEEDED.*\[libkrb5\.so'
+
       - name: List files in the repository and build dir
         run: |
           echo "=== Workspace: ${{ github.workspace }} ==="
