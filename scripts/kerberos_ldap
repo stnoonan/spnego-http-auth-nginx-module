@@ -1983,6 +1983,8 @@ spnego_reply_tokens()
 	DECODED_TOKEN="$(mktemp)" || return 1
 	TOKEN_RESULT=0
 	for REPLY_TOKEN in $1; do
+		case "${REPLY_TOKEN}" in *[!A-Za-z0-9+/=]*) TOKEN_RESULT=1; break ;; esac
+		[ $(( ${#REPLY_TOKEN} % 4 )) -eq 0 ] || { TOKEN_RESULT=1; break; }
 		if ! printf '%s' "${REPLY_TOKEN}" | base64 -d > "${DECODED_TOKEN}" 2>/dev/null; then
 			TOKEN_RESULT=1
 			break
