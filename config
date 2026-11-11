@@ -40,6 +40,13 @@ GSSAPI_INCS=$(echo "$GSSAPI_CFLAGS" | tr ' ' '\n' | sed -n 's/^-I//p' | tr '\n' 
 GSSAPI_OTHER_CFLAGS=$(echo "$GSSAPI_CFLAGS" | tr ' ' '\n' | grep -v '^-I' | tr '\n' ' ')
 CFLAGS="$CFLAGS $GSSAPI_OTHER_CFLAGS"
 
+# MIT declares its GSSAPI extensions in gssapi_ext.h, Heimdal in gssapi.h
+if [ "$GSSAPI_FLAVOR" = "MIT" ]; then
+    GSSAPI_EXT_INC="#include <gssapi/gssapi_ext.h>"
+else
+    GSSAPI_EXT_INC=""
+fi
+
 ngx_feature="GSSAPI ($GSSAPI_FLAVOR)"
 ngx_feature_name=$([ "$GSSAPI_FLAVOR" = "Heimdal" ] && echo ngx_have_heimdal_gssapi || echo ngx_have_mit_gssapi)
 ngx_feature_run=no
@@ -53,7 +60,7 @@ ngx_feature="gss_acquire_cred_from()"
 ngx_feature_name="ngx_have_gss_acquire_cred_from"
 ngx_feature_run=no
 ngx_feature_incs="#include <gssapi/gssapi.h>
-#include <gssapi/gssapi_ext.h>"
+$GSSAPI_EXT_INC"
 ngx_feature_path="$GSSAPI_INCS"
 ngx_feature_libs="$GSSAPI_LIBS"
 ngx_feature_test="gss_acquire_cred_from(NULL, GSS_C_NO_NAME, GSS_C_INDEFINITE, GSS_C_NO_OID_SET, GSS_C_BOTH, NULL, NULL, NULL, NULL);"
@@ -64,7 +71,7 @@ ngx_feature="gss_store_cred_into()"
 ngx_feature_name="ngx_have_gss_store_cred_into"
 ngx_feature_run=no
 ngx_feature_incs="#include <gssapi/gssapi.h>
-#include <gssapi/gssapi_ext.h>"
+$GSSAPI_EXT_INC"
 ngx_feature_path="$GSSAPI_INCS"
 ngx_feature_libs="$GSSAPI_LIBS"
 ngx_feature_test="gss_store_cred_into(NULL, GSS_C_NO_CREDENTIAL, GSS_C_INITIATE, GSS_C_NULL_OID, 0, 0, NULL, NULL, NULL);"

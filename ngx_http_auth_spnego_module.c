@@ -39,7 +39,10 @@ typedef long _off_t;
 #endif
 
 #include <gssapi/gssapi.h>
+#if !(NGX_HAVE_HEIMDAL_GSSAPI)
+/* MIT only, Heimdal declares its GSSAPI extensions in gssapi.h */
 #include <gssapi/gssapi_ext.h>
+#endif
 #include <gssapi/gssapi_krb5.h>
 #include <krb5.h>
 #include <stdbool.h>
@@ -67,6 +70,12 @@ typedef long _off_t;
 #define NGX_HTTP_AUTH_SPNEGO_HAVE_CB_FLAG 1
 #endif
 
+/* Heimdal deprecates krb5_free_unparsed_name() in favour of krb5_xfree(). */
+#if (NGX_HAVE_HEIMDAL_GSSAPI)
+#define spnego_free_unparsed_name(ctx, s) krb5_xfree(s)
+#else
+#define spnego_free_unparsed_name(ctx, s) krb5_free_unparsed_name(ctx, s)
+#endif
 
 #define spnego_log_krb5_error(context, code)                                   \
     {                                                                          \
@@ -1481,7 +1490,7 @@ static krb5_error_code ngx_http_auth_spnego_verify_server_credentials(
     }
 done:
     if (princ_name)
-        krb5_free_unparsed_name(kcontext, princ_name);
+        spnego_free_unparsed_name(kcontext, princ_name);
     if (principal)
         krb5_free_principal(kcontext, principal);
     if (match_creds.server)
@@ -1627,7 +1636,7 @@ done:
     }
 
     if (principal_name)
-        krb5_free_unparsed_name(kcontext, principal_name);
+        spnego_free_unparsed_name(kcontext, principal_name);
     if (principal)
         krb5_free_principal(kcontext, principal);
     if (creds.client)
