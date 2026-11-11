@@ -689,6 +689,7 @@ static ngx_int_t ngx_http_auth_spnego_get_handler(ngx_http_request_t *r,
     stored = ngx_http_auth_spnego_indexed_variable(r, &name);
     ctx = ngx_http_get_module_ctx(r->main, ngx_http_auth_spnego_module);
     if (v != stored) {
+        *v = ngx_http_variable_null_value;
         if (ctx != NULL && !ctx->redirected) {
             return NGX_OK;
         }
