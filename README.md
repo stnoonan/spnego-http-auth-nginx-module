@@ -87,6 +87,16 @@ be a sufficient workaround for now.
 If you would like to enable GSS local name rules to rewrite usernames, you can
 specify the `auth_gss_map_to_local` option.
 
+Internal Redirects
+------------------
+
+Users stay authenticated when nginx passes a request on to another location
+internally (for example with `index`, `try_files`, `error_page` or a named
+location), as long as that location uses the same `auth_gss` settings.  Its
+`auth_gss_authorized_principal` list still applies.  If the settings differ,
+the user gets a 401: with basic authentication fallback enabled, the browser
+prompts for a username and password.
+
 Credential Delegation
 -----------------------------
 
