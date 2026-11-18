@@ -1,4 +1,4 @@
-name: Build on Windows (MSVC)
+name: Build on Windows
 
 # Compile-only check: builds nginx with the module using MSVC against
 # MIT Kerberos for Windows. No tests are run.

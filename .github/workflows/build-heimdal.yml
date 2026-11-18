@@ -1,0 +1,69 @@
+name: Build on Heimdal
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+
+  build-heimdal:
+
+    # Compile-only: the test script uses kdb5_ldap_util, kadmin.local and
+    # /etc/krb5kdc/ paths that are all MIT-specific; running the full suite
+    # against Heimdal requires a separate effort.
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - ubuntu-26.04
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+
+      - name: Update APT package index
+        run: |
+          sudo apt-get update -qq
+
+      - name: Install helper packages
+        run: |
+          sudo apt-get install eatmydata
+
+      - name: Install packages
+        run: |
+          sudo eatmydata apt-get install                                        \
+            nginx nginx-dev build-essential heimdal-dev
+
+      - name: Check out repository code
+        uses: actions/checkout@v5
+
+      - name: Create build directory
+        run: |
+          mkdir "${{ github.workspace }}/build"
+
+      - name: Run configure script
+        run: |
+          cd /usr/share/nginx/src
+          . ./conf_flags
+          ./configure                                                           \
+            --with-cc-opt="-fPIC -pedantic -Wshadow"                           \
+            --with-ld-opt="-Wl,-z,relro"                                       \
+            "${NGX_CONF_FLAGS[@]}"                                             \
+            --add-dynamic-module="${{ github.workspace }}"                     \
+            --builddir="${{ github.workspace }}/build"
+
+      - name: Build module
+        run: |
+          cd "${{ github.workspace }}/build"
+          make                                                                  \
+            -f "${{ github.workspace }}/build/Makefile"                        \
+            -C "/usr/share/nginx/src"                                          \
+            modules
+
+      - name: Check that the module links against libkrb5
+        run: |
+          so="${{ github.workspace }}/build/ngx_http_auth_spnego_module.so"
+          readelf -d "$so" | grep NEEDED
+          readelf -d "$so" | grep -q 'NEEDED.*\[libkrb5\.so'
