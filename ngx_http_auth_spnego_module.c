@@ -31,6 +31,13 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 
+#if (NGX_WIN32) && defined(_MSC_VER)
+/* nginx defines _OFF_T_DEFINED (for its own 64-bit off_t), which stops the
+ * Windows SDK's <sys/types.h> from declaring _off_t. MIT Kerberos for
+ * Windows' headers include <sys/stat.h>, which needs it. */
+typedef long _off_t;
+#endif
+
 #include <gssapi/gssapi.h>
 #include <gssapi/gssapi_ext.h>
 #include <gssapi/gssapi_krb5.h>
@@ -52,6 +59,13 @@
 #define NGX_HTTP_AUTH_SPNEGO_CB_OFF       0
 #define NGX_HTTP_AUTH_SPNEGO_CB_SERVER_EP 1
 #define NGX_HTTP_AUTH_SPNEGO_CB_EXPORTER  2
+
+/* GSS_C_CHANNEL_BOUND_FLAG is absent in some GSSAPI implementations
+ * (Heimdal < 8, MIT Kerberos for Windows 4.1). Without it we cannot
+ * verify that channel binding was enforced by the GSS layer. */
+#ifdef GSS_C_CHANNEL_BOUND_FLAG
+#define NGX_HTTP_AUTH_SPNEGO_HAVE_CB_FLAG 1
+#endif
 
 
 #define spnego_log_krb5_error(context, code)                                   \
@@ -526,6 +540,15 @@ static char *ngx_http_auth_spnego_merge_loc_conf(ngx_conf_t *cf, void *parent,
     ngx_conf_merge_uint_value(conf->channel_binding,
                               prev->channel_binding,
                               NGX_HTTP_AUTH_SPNEGO_CB_OFF);
+
+#ifndef NGX_HTTP_AUTH_SPNEGO_HAVE_CB_FLAG
+    if (conf->channel_binding != NGX_HTTP_AUTH_SPNEGO_CB_OFF) {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                           "auth_gss_channel_binding is not supported: "
+                           "the GSSAPI library lacks GSS_C_CHANNEL_BOUND_FLAG");
+        return NGX_CONF_ERROR;
+    }
+#endif
 
 #if (NGX_DEBUG)
     ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0, "auth_spnego: protect = %i",
@@ -1845,11 +1868,13 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t *r,
         spnego_error(NGX_DECLINED);
     }
 
+#ifdef NGX_HTTP_AUTH_SPNEGO_HAVE_CB_FLAG
     if (alcf->channel_binding != NGX_HTTP_AUTH_SPNEGO_CB_OFF
         && !(ret_flags & GSS_C_CHANNEL_BOUND_FLAG)) {
         spnego_log_error("channel binding required but not provided by client");
         spnego_error(NGX_DECLINED);
     }
+#endif
 
     if (output_token.length) {
         spnego_token.data = (u_char *)output_token.value;

@@ -1,0 +1,99 @@
+name: Build on Windows (MSVC)
+
+# Compile-only check: builds nginx with the module using MSVC against
+# MIT Kerberos for Windows. No tests are run.
+
+on: [push, pull_request, workflow_dispatch]
+
+permissions:
+  contents: read
+
+env:
+  NGINX_REF: release-1.31.9
+  KFW_URL: https://web.mit.edu/kerberos/dist/kfw/4.1/kfw-4.1-amd64.msi
+
+jobs:
+
+  build-windows:
+
+    runs-on: windows-2025
+
+    steps:
+
+      - name: Disable CRLF conversion
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+
+      - name: Check out repository code
+        uses: actions/checkout@v5
+        with:
+          path: module
+
+      - name: Check out nginx source
+        uses: actions/checkout@v5
+        with:
+          repository: nginx/nginx
+          ref: ${{ env.NGINX_REF }}
+          path: nginx
+
+      - name: Extract MIT Kerberos for Windows SDK
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri $env:KFW_URL -OutFile kfw.msi
+          # Administrative install: only unpacks the files, no system changes
+          Start-Process msiexec.exe -Wait -NoNewWindow `
+            -ArgumentList '/a', 'kfw.msi', '/qn', 'TARGETDIR=C:\kfw'
+          Get-ChildItem -Recurse C:\kfw -Include gssapi.h, *.lib |
+            Select-Object -ExpandProperty FullName
+
+      - name: Set up MSVC environment
+        uses: TheMrMilchmann/setup-msvc-dev@v4
+        with:
+          arch: x64
+
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MSYS
+          path-type: inherit
+          update: false
+
+      - name: Run configure script
+        shell: msys2 {0}
+        run: |
+          # MSYS2's coreutils link.exe would shadow MSVC's link.exe
+          rm -f /usr/bin/link.exe
+
+          kfw_inc=$(dirname "$(dirname "$(find /c/kfw -path '*/include/gssapi/gssapi.h' | head -n1)")")
+          kfw_lib=$(dirname "$(find /c/kfw -path '*/lib/amd64/gssapi64.lib' | head -n1)")
+          test -d "$kfw_inc" && test -d "$kfw_lib"
+          kfw_inc=$(cygpath -m "$kfw_inc")
+          kfw_lib=$(cygpath -m "$kfw_lib")
+          echo "KfW include: $kfw_inc"
+          echo "KfW lib:     $kfw_lib"
+
+          export GSSAPI_CFLAGS="-I$kfw_inc"
+          export GSSAPI_LIBS="$kfw_lib/gssapi64.lib $kfw_lib/krb5_64.lib"
+
+          cd nginx
+          sh auto/configure                                                   \
+            --with-cc=cl                                                      \
+            --builddir=objs                                                   \
+            --prefix=                                                         \
+            --without-http_rewrite_module                                     \
+            --without-http_gzip_module                                        \
+            --add-module=../module                                            \
+            || { cat objs/autoconf.err; exit 1; }
+
+      - name: Show autoconf log
+        if: always()
+        shell: msys2 {0}
+        run: |
+          cat nginx/objs/autoconf.err || true
+
+      - name: Build nginx with module
+        shell: cmd
+        working-directory: nginx
+        run: |
+          nmake -f objs/Makefile
