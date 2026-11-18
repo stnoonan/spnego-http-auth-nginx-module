@@ -350,14 +350,14 @@ static void *ngx_http_auth_spnego_create_loc_conf(ngx_conf_t *cf) {
     return conf;
 }
 
-static ngx_int_t ngx_http_auth_spnego_init_shm_zone(ngx_shm_zone_t *shm_zone,
+static ngx_int_t ngx_http_auth_spnego_init_shm_zone(ngx_shm_zone_t *zone,
                                                     void *data) {
     if (data) {
-        shm_zone->data = data;
+        zone->data = data;
         return NGX_OK;
     }
 
-    shm_zone->data = shm_zone->shm.addr;
+    zone->data = zone->shm.addr;
     return NGX_OK;
 }
 
@@ -862,7 +862,7 @@ ngx_int_t ngx_http_auth_spnego_token(ngx_http_request_t *r,
 
     ctx->token.len = decoded.len;
     ctx->token.data = decoded.data;
-    spnego_debug2("Token (base64): %*s", token.len, token.data);
+    spnego_debug1("Token (base64), length: %uz", token.len);
 
     return NGX_OK;
 }
@@ -1252,16 +1252,16 @@ ngx_int_t ngx_http_auth_spnego_basic(ngx_http_request_t *r,
     if (alcf->fqun &&
         !ngx_http_auth_spnego_realm_from_str(r->headers_in.user, NULL)) {
         const char *realm_at = strrchr(name, '@');
-        const char *realm = (realm_at && realm_at[1]) ? realm_at + 1 : NULL;
-        if (realm) {
-            new_user.len = r->headers_in.user.len + 1 + ngx_strlen(realm);
+        const char *krb5realm = (realm_at && realm_at[1]) ? realm_at + 1 : NULL;
+        if (krb5realm) {
+            new_user.len = r->headers_in.user.len + 1 + ngx_strlen(krb5realm);
             new_user.data = ngx_palloc(r->pool, new_user.len);
             if (new_user.data == NULL) {
                 spnego_log_error("Not enough memory");
                 spnego_error(NGX_ERROR);
             }
             ngx_snprintf(new_user.data, new_user.len, "%V@%s",
-                         &r->headers_in.user, realm);
+                         &r->headers_in.user, krb5realm);
             r->headers_in.user.data = new_user.data;
             r->headers_in.user.len = new_user.len;
         }
@@ -1888,7 +1888,7 @@ ngx_http_auth_spnego_auth_user_gss(ngx_http_request_t *r,
         if (GSS_ERROR(major_status)) {
             spnego_log_error("%s", get_gss_error(r->pool, minor_status,
                                                  "gss_localname() failed"));
-            spnego_error(NGX_ERROR);
+            spnego_error(NGX_DECLINED);
         }
     }
 

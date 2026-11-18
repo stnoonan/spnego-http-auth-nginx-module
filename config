@@ -26,13 +26,17 @@ if [ "$GSSAPI_FLAVOR" = "unknown" ]; then
     exit 1
 fi
 
-NGX_CFLAGS="$NGX_CFLAGS $GSSAPI_CFLAGS"
+# nginx doesn't read NGX_CFLAGS: pass -I paths as module include dirs
+# and append any other compiler flags to CFLAGS.
+GSSAPI_INCS=$(echo "$GSSAPI_CFLAGS" | tr ' ' '\n' | sed -n 's/^-I//p' | tr '\n' ' ')
+GSSAPI_OTHER_CFLAGS=$(echo "$GSSAPI_CFLAGS" | tr ' ' '\n' | grep -v '^-I' | tr '\n' ' ')
+CFLAGS="$CFLAGS $GSSAPI_OTHER_CFLAGS"
 
 ngx_feature="GSSAPI ($GSSAPI_FLAVOR)"
 ngx_feature_name=$([ "$GSSAPI_FLAVOR" = "Heimdal" ] && echo ngx_have_heimdal_gssapi || echo ngx_have_mit_gssapi)
 ngx_feature_run=no
 ngx_feature_incs="#include <gssapi/gssapi.h>"
-ngx_feature_path="$(echo "$GSSAPI_CFLAGS" | tr ' ' '\n' | sed -n 's/^-I//p' | tr '\n' ' ')"
+ngx_feature_path="$GSSAPI_INCS"
 ngx_feature_libs="$GSSAPI_LIBS"
 ngx_feature_test="gss_ctx_id_t ctx = GSS_C_NO_CONTEXT; (void) ctx;"
 . auto/feature
@@ -42,7 +46,7 @@ ngx_feature_name="ngx_have_gss_acquire_cred_from"
 ngx_feature_run=no
 ngx_feature_incs="#include <gssapi/gssapi.h>
 #include <gssapi/gssapi_ext.h>"
-ngx_feature_path="$(echo "$GSSAPI_CFLAGS" | tr ' ' '\n' | sed -n 's/^-I//p' | tr '\n' ' ')"
+ngx_feature_path="$GSSAPI_INCS"
 ngx_feature_libs="$GSSAPI_LIBS"
 ngx_feature_test="gss_acquire_cred_from(NULL, GSS_C_NO_NAME, GSS_C_INDEFINITE, GSS_C_NO_OID_SET, GSS_C_BOTH, NULL, NULL, NULL, NULL);"
 . auto/feature
@@ -53,7 +57,7 @@ ngx_feature_name="ngx_have_gss_store_cred_into"
 ngx_feature_run=no
 ngx_feature_incs="#include <gssapi/gssapi.h>
 #include <gssapi/gssapi_ext.h>"
-ngx_feature_path="$(echo "$GSSAPI_CFLAGS" | tr ' ' '\n' | sed -n 's/^-I//p' | tr '\n' ' ')"
+ngx_feature_path="$GSSAPI_INCS"
 ngx_feature_libs="$GSSAPI_LIBS"
 ngx_feature_test="gss_store_cred_into(NULL, GSS_C_NO_CREDENTIAL, GSS_C_INITIATE, GSS_C_NULL_OID, 0, 0, NULL, NULL, NULL);"
 . auto/feature
@@ -61,6 +65,7 @@ ngx_found_gss_store_cred_into=$ngx_found
 
 ngx_module_type=HTTP
 ngx_module_name=ngx_http_auth_spnego_module
+ngx_module_incs="$GSSAPI_INCS"
 ngx_module_srcs="$ngx_addon_dir/ngx_http_auth_spnego_module.c"
 ngx_module_libs="$GSSAPI_LIBS"
 . auto/module
