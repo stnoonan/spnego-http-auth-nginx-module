@@ -1,4 +1,4 @@
-name: Build and test
+name: Build and test on MIT
 
 on: [push, pull_request]
 
@@ -7,7 +7,7 @@ permissions:
 
 jobs:
 
-  build-test:
+  build-mit:
 
     # nginx-dev doesn't exist on releases before 24.04
     strategy:
