@@ -1,10 +1,18 @@
 ngx_addon_name=ngx_http_auth_spnego_module
 
-GSSAPI_CFLAGS=""
-GSSAPI_LIBS=""
-GSSAPI_FLAVOR="unknown"
+# GSSAPI_CFLAGS and GSSAPI_LIBS may be preset in the environment to skip
+# autodetection, e.g. for MSVC builds against MIT Kerberos for Windows,
+# where neither pkg-config nor krb5-config is available. GSSAPI_FLAVOR
+# (MIT or Heimdal) may be preset as well and defaults to MIT.
+if [ -n "$GSSAPI_CFLAGS$GSSAPI_LIBS" ]; then
+    GSSAPI_FLAVOR="${GSSAPI_FLAVOR:-MIT}"
+else
+    GSSAPI_FLAVOR="unknown"
+fi
 
-if pkg-config --exists mit-krb5-gssapi mit-krb5 2>/dev/null; then
+if [ "$GSSAPI_FLAVOR" != "unknown" ]; then
+    true
+elif pkg-config --exists mit-krb5-gssapi mit-krb5 2>/dev/null; then
     GSSAPI_CFLAGS=$(pkg-config --cflags mit-krb5-gssapi mit-krb5)
     GSSAPI_LIBS=$(pkg-config --libs mit-krb5-gssapi mit-krb5)
     GSSAPI_FLAVOR="MIT"
