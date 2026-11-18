@@ -397,10 +397,78 @@ openssl req -x509 -nodes -newkey rsa:2048 \
 echo "OK"
 
 
+# The Authorization header checks require the headers-more module.
+printf "Checking for the headers-more module ... "
+if ! grep -qs 'load_module modules/ngx_http_headers_more_filter_module.so;' /etc/nginx/modules-enabled/*; then
+	printf 'load_module modules/ngx_http_headers_more_filter_module.so;\n' > /etc/nginx/modules-enabled/50-headers-more-test.conf || die
+fi
+echo "OK"
+
+
+# Each destination changes one setting. Sharing the configuration and request
+# table keeps these comparisons from needing separate PHP pages and test blocks.
+REDIRECT_SETTINGS="$(cat <<EOF
+redirect keytab auth_gss_keytab /etc/krb5.keytab
+redirect keytab-longer auth_gss_keytab /etc/krb5.http.keytab.copy
+redirect keytab-same-length auth_gss_keytab /etc/krb5.copy.keytab
+redirect realm auth_gss_realm OTHER.COM
+redirect realm-longer auth_gss_realm ${KERBEROS_REALM}.OTHER
+redirect realm-case auth_gss_realm ${DOMAIN}
+redirect service auth_gss_service_name HTTP/other.${TEST_HOST_FQDN}
+redirect service-empty auth_gss_service_name ""
+redirect format auth_gss_format_full off
+redirect map auth_gss_map_to_local on
+redirect delegate auth_gss_delegate_credentials on
+delegate_chain constrained auth_gss_constrained_delegation off
+delegate_chain service-empty auth_gss_service_name ""
+delegate_chain ccache-shorter auth_gss_service_ccache /tmp/krb5cc
+delegate_chain ccache-longer auth_gss_service_ccache /tmp/krb5cc_nginx2
+delegate_chain ccache-last auth_gss_service_ccache /tmp/krb5cc_nginX
+EOF
+)"
+
+delegation_settings()
+{
+	cat <<EOF
+		auth_gss on;
+		auth_gss_realm ${KERBEROS_REALM};
+		auth_gss_keytab /etc/krb5.http.keytab;
+		auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+		auth_gss_allow_basic_fallback off;
+		auth_gss_authorized_principal $1@${KERBEROS_REALM};
+		auth_gss_format_full on;
+		auth_gss_service_ccache /tmp/krb5cc_nginx;
+		auth_gss_delegate_credentials on;
+		auth_gss_constrained_delegation on;
+EOF
+}
+
+redirect_settings_locations()
+{
+	printf '%s\n' "${REDIRECT_SETTINGS}" | while read -r GROUP NAME DIRECTIVE VALUE; do
+		if [ "${GROUP}" = "$1" ]; then
+			cat <<EOF
+		location /${GROUP}/settings/${NAME}/ {
+			index /${GROUP}/settings/${NAME}/final;
+			location = /${GROUP}/settings/${NAME}/final {
+				${DIRECTIVE} ${VALUE};
+				alias /var/www/kerberos/satisfyany;
+			}
+		}
+EOF
+		fi
+	done
+}
+
 printf "Creating nginx test site ... "
 if ! cat <<EOF > /etc/nginx/sites-available/kerberos
 # SPNEGO/Kerberos server test configuration
 #
+# A map supplies a variable so set assignments exercise variable values too.
+map \$uri \$destination_ccache {
+	default "FILE:/tmp/destination-cache";
+}
+
 server {
 	listen 8080;
 	listen [::]:8080;
@@ -490,6 +558,815 @@ server {
 		auth_gss_service_name HTTP/${TEST_HOST_FQDN};
 		auth_gss_allow_basic_fallback off;
 	}
+
+	# Public destinations keep the delegated credentials after a redirect.
+	location /delegate_public/ {
+$(delegation_settings alice)
+                index /public_delegate.php;
+	}
+
+	location /delegate_public_sub/ {
+$(delegation_settings alice)
+                index /public_sub_delegate.php;
+	}
+
+	# A public SSI subrequest keeps credentials after the parent refuses the login.
+	location /delegate_sub_refused/ {
+$(delegation_settings alice)
+		index /delegate_sub_refused/denied.html;
+
+		location /delegate_sub_refused/wrong/ {
+			index /delegate_sub_refused/wrong.html;
+		}
+
+		location = /delegate_sub_refused/wrong.html {
+			ssi on;
+			alias /var/www/kerberos/deny_sub.html;
+			satisfy any;
+			allow all;
+			auth_gss_allow_basic_fallback on;
+			more_set_input_headers "Authorization: Basic Ym9iOndyb25n";
+		}
+
+		location = /delegate_sub_refused/denied.html {
+			ssi on;
+			alias /var/www/kerberos/deny_sub.html;
+			satisfy any;
+			allow all;
+			auth_gss_allow_basic_fallback on;
+			auth_gss_authorized_principal bob@${KERBEROS_REALM};
+		}
+	}
+
+	location /delegate_clear_public/ {
+$(delegation_settings alice)
+		index /delegate_clear_public/check;
+
+		location = /delegate_clear_public/check {
+			more_clear_input_headers Authorization;
+			error_page 401 = /public_clear_ccache;
+		}
+	}
+
+	location = /public_clear_ccache {
+		auth_gss off;
+		proxy_set_header Authorization "";
+		proxy_set_header X-Ccache \$krb5_cc_name;
+		proxy_pass http://127.0.0.1:8082/ccache_check;
+	}
+
+	location /public_delegate.php {
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+                auth_gss off;
+                fastcgi_param KRB5CCNAME \$krb5_cc_name;
+	}
+
+	location /public_sub_delegate.php {
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+                auth_gss off;
+                auth_request /sub_delegate.php;
+                fastcgi_param KRB5CCNAME \$krb5_cc_name;
+	}
+
+	location = /sub_delegate.php {
+		internal;
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+                auth_gss off;
+                fastcgi_param KRB5CCNAME \$krb5_cc_name;
+	}
+
+	# A protected rewrite cannot copy the cache, but the public backend can.
+	location /delegate_hidden/ {
+$(delegation_settings alice)
+                index /read_hidden_ccache;
+	}
+
+	location = /read_hidden_ccache {
+                auth_gss on;
+                set \$copied_ccache \$krb5_cc_name;
+                rewrite ^ /ccache_public last;
+	}
+
+	location = /ccache_public {
+                auth_gss off;
+                proxy_set_header Authorization "";
+                proxy_set_header X-Ccache \$krb5_cc_name;
+                proxy_set_header X-Copied-Ccache "before:\$copied_ccache";
+                proxy_pass http://127.0.0.1:8082/ccache_check;
+	}
+
+	location /delegate_chain/ {
+$(delegation_settings alice)
+                index /delegate_chain_refused.php;
+$(redirect_settings_locations delegate_chain)
+		location /delegate_chain/header/ {
+			index /header_bob_basic.php;
+		}
+	}
+
+	location /delegate_chain_refused.php {
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+$(delegation_settings bob)
+                error_page 403 = /delegate.php;
+	}
+
+	location /header_same_length/ {
+                auth_gss on;
+                auth_gss_realm ${KERBEROS_REALM};
+                auth_gss_keytab /etc/krb5.http.keytab;
+                auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+                auth_gss_allow_basic_fallback off;
+                auth_gss_format_full on;
+                index /header_same_length.php;
+	}
+
+	location /header_same_length.php {
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+		more_set_input_headers "Authorization: Basic $(printf %s "alica@${KERBEROS_REALM}:bogus_auth_gss_passwd" | base64 -w0)";
+                auth_gss on;
+                auth_gss_realm ${KERBEROS_REALM};
+                auth_gss_keytab /etc/krb5.http.keytab;
+                auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+                auth_gss_allow_basic_fallback off;
+                auth_gss_format_full on;
+	}
+
+	location /assigned_ccache_redirect/ {
+                set \$krb5_cc_name "FILE:/tmp/krb5cc_assigned";
+                auth_gss on;
+                auth_gss_realm ${KERBEROS_REALM};
+                auth_gss_keytab /etc/krb5.http.keytab;
+                auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+                auth_gss_allow_basic_fallback off;
+                auth_gss_format_full on;
+                auth_gss_service_ccache /tmp/krb5cc_nginx;
+                auth_gss_delegate_credentials on;
+                auth_gss_constrained_delegation on;
+                index /assigned_ccache_copy.php;
+	}
+
+	location /assigned_ccache_copy.php {
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+                set \$ccache_copy \$krb5_cc_name;
+                satisfy any;
+                allow all;
+                auth_gss on;
+                auth_gss_realm ${KERBEROS_REALM};
+                auth_gss_keytab /etc/krb5.http.keytab;
+                auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+                auth_gss_allow_basic_fallback on;
+                auth_gss_format_full on;
+                fastcgi_param HTTP_AUTHORIZATION "";
+                fastcgi_param KRB5CCNAME \$ccache_copy;
+	}
+
+	location /assigned_ccache_kept/ {
+                set \$krb5_cc_name \$destination_ccache;
+                auth_gss on;
+                auth_gss_realm ${KERBEROS_REALM};
+                auth_gss_keytab /etc/krb5.http.keytab;
+                auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+                auth_gss_allow_basic_fallback off;
+                auth_gss_format_full on;
+                index /assigned_ccache_kept;
+	}
+
+	location = /assigned_ccache_kept {
+                set \$ccache_copy \$krb5_cc_name;
+                auth_gss on;
+                auth_gss_realm ${KERBEROS_REALM};
+                auth_gss_keytab /etc/krb5.http.keytab;
+                auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+                auth_gss_allow_basic_fallback off;
+                auth_gss_format_full on;
+                proxy_set_header Authorization "";
+                proxy_set_header X-Ccache \$krb5_cc_name;
+                proxy_set_header X-Copied-Ccache "before:\$ccache_copy";
+                proxy_pass http://127.0.0.1:8082/ccache_check;
+	}
+
+	# auth_request_set, unlike set, leaves the earlier read's no_cacheable flag.
+	location = /assigned_ccache_auth_request {
+                set \$ccache_copy \$krb5_cc_name;
+                auth_gss on;
+                auth_gss_realm ${KERBEROS_REALM};
+                auth_gss_keytab /etc/krb5.http.keytab;
+                auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+                auth_gss_allow_basic_fallback off;
+                auth_gss_format_full on;
+                auth_request /assigned_ccache_auth_ok;
+                auth_request_set \$krb5_cc_name \$destination_ccache;
+                proxy_set_header Authorization "";
+                proxy_set_header X-Ccache \$krb5_cc_name;
+                proxy_pass http://127.0.0.1:8082/ccache_check;
+	}
+
+	location = /assigned_ccache_auth_ok {
+                internal;
+                auth_gss off;
+                proxy_pass http://127.0.0.1:8082/ccache_check;
+	}
+
+	location /delegate_assigned_before.php {
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+                set \$krb5_cc_name \$destination_ccache;
+$(delegation_settings alice)
+                fastcgi_param HTTP_AUTHORIZATION "";
+                fastcgi_param KRB5CCNAME \$krb5_cc_name;
+	}
+
+	location = /delegate_subrequest.html {
+                ssi on;
+$(delegation_settings alice)
+	}
+
+	location = /subrequest_ccache {
+                internal;
+                return 200 "\$krb5_cc_name";
+	}
+
+	location /delegate_deny_copy/ {
+$(delegation_settings alice)
+                index /deny_copy_no_ccache.php;
+	}
+
+	location /delegate_copy_ok/ {
+		auth_gss on;
+		auth_gss_realm ${KERBEROS_REALM};
+		auth_gss_keytab /etc/krb5.http.keytab;
+		auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+		auth_gss_allow_basic_fallback on;
+		auth_gss_authorized_principal bob@${KERBEROS_REALM};
+		auth_gss_authorized_principal alice@${KERBEROS_REALM};
+		auth_gss_format_full on;
+		auth_gss_delegate_credentials on;
+		index /delegate_copy_ok/check;
+		location /delegate_copy_ok/header/ {
+			index /header_bob_basic.php;
+		}
+
+		location = /delegate_copy_ok/check {
+			set \$saved_ccache \$krb5_cc_name;
+			satisfy any;
+			allow all;
+			include fastcgi_params;
+			fastcgi_param SCRIPT_FILENAME /var/www/kerberos/delegate.php;
+			fastcgi_param HTTP_AUTHORIZATION "";
+			fastcgi_param KRB5CCNAME \$saved_ccache;
+			fastcgi_pass unix:/run/php/php-fpm.sock;
+		}
+	}
+
+	location /challenge_reuse/ {
+		auth_gss on;
+		auth_gss_realm ${KERBEROS_REALM};
+		auth_gss_keytab /etc/krb5.http.keytab;
+		auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+		auth_gss_allow_basic_fallback on;
+		auth_gss_authorized_principal bob@${KERBEROS_REALM};
+		auth_gss_format_full on;
+		recursive_error_pages on;
+		index /challenge_reuse/static;
+
+		location = /challenge_reuse/static {
+			auth_gss_format_full off;
+			satisfy any;
+			allow all;
+			alias /var/www/kerberos/satisfyany;
+			error_page 412 = /challenge_reuse/redirect;
+		}
+
+		location = /challenge_reuse/redirect {
+			auth_gss off;
+			error_page 302 /challenge_reuse/final;
+			return 302 http://${TEST_HOST_FQDN}:8080/redirect-target;
+		}
+
+		location = /challenge_reuse/final {
+			more_set_input_headers "Authorization: Basic $(printf %s "bob:${KRB_BOB_PW}" | base64 -w0)";
+			alias /var/www/kerberos/satisfyany;
+		}
+	}
+
+	location /delegate_deny_named/ {
+$(delegation_settings alice)
+                try_files \$uri @deny_copy_no_ccache;
+	}
+
+	location @deny_copy_no_ccache {
+                set \$saved_ccache \$krb5_cc_name;
+                satisfy any;
+                allow all;
+$(delegation_settings bob)
+		include fastcgi_params;
+		fastcgi_param SCRIPT_FILENAME /var/www/kerberos/cache_denied.php;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+                fastcgi_param HTTP_AUTHORIZATION "";
+                fastcgi_param KRB5CCNAME \$saved_ccache;
+	}
+
+	location /deny_copy_no_ccache.php {
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+                set \$saved_ccache \$krb5_cc_name;
+                satisfy any;
+                allow all;
+$(delegation_settings bob)
+                fastcgi_param HTTP_AUTHORIZATION "";
+                fastcgi_param KRB5CCNAME \$saved_ccache;
+	}
+
+	location /delegate_assigned/ {
+$(delegation_settings alice)
+                index /assigned_after_redirect;
+	}
+
+	location = /assigned_after_redirect {
+                set \$krb5_cc_name \$destination_ccache;
+                set \$ccache_copy \$krb5_cc_name;
+                satisfy any;
+                allow all;
+                auth_gss on;
+                auth_gss_realm ${KERBEROS_REALM};
+                auth_gss_keytab /etc/krb5.http.keytab;
+                auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+                auth_gss_allow_basic_fallback on;
+                auth_gss_format_full on;
+                proxy_set_header Authorization "";
+                proxy_set_header X-Ccache \$krb5_cc_name;
+                proxy_set_header X-Copied-Ccache "before:\$ccache_copy";
+                proxy_pass http://127.0.0.1:8082/ccache_check;
+	}
+
+	location /delegate_assigned_ok/ {
+$(delegation_settings alice)
+                index /assigned_same_settings;
+	}
+
+	location = /assigned_same_settings {
+                set \$krb5_cc_name \$destination_ccache;
+                set \$ccache_copy \$krb5_cc_name;
+$(delegation_settings alice)
+                proxy_set_header Authorization "";
+                proxy_set_header X-Ccache \$krb5_cc_name;
+                proxy_set_header X-Copied-Ccache "before:\$ccache_copy";
+                proxy_pass http://127.0.0.1:8082/ccache_check;
+	}
+
+	location /short_back.php {
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+                auth_gss on;
+                auth_gss_realm ${KERBEROS_REALM};
+                auth_gss_keytab /etc/krb5.http.keytab;
+                auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+                auth_gss_allow_basic_fallback off;
+                auth_gss_format_full off;
+                fastcgi_param HTTP_AUTHORIZATION "";
+                error_page 401 = /auth.php;
+	}
+
+	location /short_back_basic.php {
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+                auth_gss on;
+                auth_gss_realm ${KERBEROS_REALM};
+                auth_gss_keytab /etc/krb5.http.keytab;
+                auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+                auth_gss_allow_basic_fallback on;
+                auth_gss_format_full off;
+                error_page 401 = /auth.php;
+	}
+
+	location /short_back_keep.php {
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+                auth_gss on;
+                auth_gss_realm ${KERBEROS_REALM};
+                auth_gss_keytab /etc/krb5.http.keytab;
+                auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+                auth_gss_allow_basic_fallback off;
+                auth_gss_format_full off;
+                error_page 401 /auth.php;
+	}
+
+	location /response_status.php {
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+                auth_gss on;
+                auth_gss_realm ${KERBEROS_REALM};
+                auth_gss_keytab /etc/krb5.http.keytab;
+                auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+                auth_gss_allow_basic_fallback off;
+                auth_gss_authorized_principal alice@${KERBEROS_REALM};
+                auth_gss_format_full on;
+                fastcgi_param HTTP_AUTHORIZATION "";
+	}
+
+	location /header_clear.php {
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+                more_clear_input_headers Authorization;
+                auth_gss on;
+                auth_gss_realm ${KERBEROS_REALM};
+                auth_gss_keytab /etc/krb5.http.keytab;
+                auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+                auth_gss_allow_basic_fallback on;
+                auth_gss_format_full on;
+                fastcgi_param HTTP_AUTHORIZATION "";
+	}
+
+	location /header_wrong.php {
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+                more_set_input_headers "Authorization: Basic $(printf %s "bob:wrong" | base64 -w0)";
+                auth_gss on;
+                auth_gss_realm ${KERBEROS_REALM};
+                auth_gss_keytab /etc/krb5.http.keytab;
+                auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+                auth_gss_allow_basic_fallback on;
+                auth_gss_format_full on;
+                fastcgi_param HTTP_AUTHORIZATION "";
+	}
+
+	location /header_clear_then.php {
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+                more_clear_input_headers Authorization;
+                error_page 401 = /header_bob_basic.php;
+                auth_gss on;
+                auth_gss_realm ${KERBEROS_REALM};
+                auth_gss_keytab /etc/krb5.http.keytab;
+                auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+                auth_gss_allow_basic_fallback on;
+                auth_gss_format_full on;
+                fastcgi_param HTTP_AUTHORIZATION "";
+	}
+
+	location /header_bob_basic.php {
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+                more_set_input_headers "Authorization: Basic $(printf %s "bob:${KRB_BOB_PW}" | base64 -w0)";
+                auth_gss on;
+                auth_gss_realm ${KERBEROS_REALM};
+                auth_gss_keytab /etc/krb5.http.keytab;
+                auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+                auth_gss_allow_basic_fallback on;
+                auth_gss_format_full on;
+                fastcgi_param HTTP_AUTHORIZATION "";
+		fastcgi_param KRB5CCNAME \$krb5_cc_name;
+	}
+
+	location /header_wrong_then.php {
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+                more_set_input_headers "Authorization: Basic $(printf %s "bob:wrong" | base64 -w0)";
+                error_page 401 = /header_bogus.php;
+                auth_gss on;
+                auth_gss_realm ${KERBEROS_REALM};
+                auth_gss_keytab /etc/krb5.http.keytab;
+                auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+                auth_gss_allow_basic_fallback on;
+                auth_gss_format_full on;
+                fastcgi_param HTTP_AUTHORIZATION "";
+	}
+
+	location /header_bogus.php {
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+                more_set_input_headers "Authorization: Basic $(printf %s "alice@${KERBEROS_REALM}:bogus_auth_gss_passwd" | base64 -w0)";
+                auth_gss on;
+                auth_gss_realm ${KERBEROS_REALM};
+                auth_gss_keytab /etc/krb5.http.keytab;
+                auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+                auth_gss_allow_basic_fallback on;
+                auth_gss_format_full on;
+                fastcgi_param HTTP_AUTHORIZATION "";
+	}
+
+	location /regex_ok.php {
+		satisfy any;
+		deny all;
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+                auth_gss on;
+                auth_gss_realm ${KERBEROS_REALM};
+                auth_gss_keytab /etc/krb5.http.keytab;
+                auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+                auth_gss_allow_basic_fallback off;
+                auth_gss_authorized_principal_regex ^alice@${KERBEROS_REALM}\$;
+                auth_gss_format_full on;
+                fastcgi_param HTTP_AUTHORIZATION "";
+                fastcgi_param KRB5CCNAME \$krb5_cc_name;
+                auth_gss_service_ccache /tmp/krb5cc_nginx;
+	}
+
+	location /regex_refused.php {
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+                auth_gss on;
+                auth_gss_realm ${KERBEROS_REALM};
+                auth_gss_keytab /etc/krb5.http.keytab;
+                auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+                auth_gss_allow_basic_fallback off;
+                auth_gss_authorized_principal_regex ^bob@${KERBEROS_REALM}\$;
+                auth_gss_format_full on;
+                fastcgi_param HTTP_AUTHORIZATION "";
+                fastcgi_param KRB5CCNAME \$krb5_cc_name;
+                auth_gss_service_ccache /tmp/krb5cc_nginx;
+	}
+
+	location /short_names.php {
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+                auth_gss on;
+                auth_gss_realm ${KERBEROS_REALM};
+                auth_gss_keytab /etc/krb5.http.keytab;
+                auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+                auth_gss_allow_basic_fallback off;
+                auth_gss_authorized_principal alice;
+                auth_gss_format_full off;
+                fastcgi_param HTTP_AUTHORIZATION "";
+                fastcgi_param KRB5CCNAME \$krb5_cc_name;
+                auth_gss_service_ccache /tmp/krb5cc_nginx;
+	}
+
+	location /short_error.php {
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+                auth_gss on;
+                auth_gss_realm ${KERBEROS_REALM};
+                auth_gss_keytab /etc/krb5.http.keytab;
+                auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+                auth_gss_allow_basic_fallback off;
+                auth_gss_format_full on;
+                fastcgi_param HTTP_AUTHORIZATION "";
+                error_page 401 /noauth.php;
+	}
+
+	location /satisfy_no_user.php {
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+                satisfy any;
+                allow all;
+                auth_gss on;
+                auth_gss_realm ${KERBEROS_REALM};
+                auth_gss_keytab /etc/krb5.http.keytab;
+                auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+                auth_gss_allow_basic_fallback on;
+                auth_gss_format_full off;
+                fastcgi_param HTTP_AUTHORIZATION "";
+	}
+
+	location /nobasic.php {
+		include snippets/fastcgi-php.conf;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+                auth_gss on;
+                auth_gss_realm ${KERBEROS_REALM};
+                auth_gss_keytab /etc/krb5.http.keytab;
+                auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+                auth_gss_allow_basic_fallback off;
+                auth_gss_authorized_principal bob@${KERBEROS_REALM};
+                auth_gss_format_full on;
+                fastcgi_param HTTP_AUTHORIZATION "";
+	}
+
+	location /redirect/ {
+		auth_gss on;
+		auth_gss_realm ${KERBEROS_REALM};
+		auth_gss_keytab /etc/krb5.http.keytab;
+		auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+		auth_gss_allow_basic_fallback off;
+		auth_gss_authorized_principal alice@${KERBEROS_REALM};
+		auth_gss_format_full on;
+		index /auth.php;
+
+		location /redirect/challenge_chain/ {
+			recursive_error_pages on;
+			index /redirect/challenge_chain/first;
+
+			location = /redirect/challenge_chain/first {
+				auth_gss_format_full off;
+				auth_gss_allow_basic_fallback on;
+				error_page 401 /redirect/challenge_chain/second;
+			}
+
+			location = /redirect/challenge_chain/second {
+				auth_gss_format_full off;
+				auth_gss_allow_basic_fallback on;
+				error_page 401 = /auth.php;
+			}
+		}
+
+		location /redirect/regex-ok/ {
+			index /regex_ok.php;
+		}
+
+		location /redirect/regex-refused/ {
+			index /regex_refused.php;
+		}
+
+		location /redirect/short-names/ {
+			auth_gss_format_full off;
+			auth_gss_authorized_principal alice;
+			index /short_names.php;
+		}
+
+		location /redirect/short-error/ {
+			auth_gss_format_full off;
+			auth_gss_authorized_principal alice;
+			index /short_error.php;
+		}
+
+		location /redirect/satisfy-user/ {
+			index /satisfy_no_user.php;
+		}
+
+		location /redirect/header-clear/ {
+			auth_gss_allow_basic_fallback on;
+			auth_gss_authorized_principal alice@${KERBEROS_REALM};
+			auth_gss_authorized_principal bob@${KERBEROS_REALM};
+			index /header_clear.php;
+		}
+
+		location /redirect/header-wrong/ {
+			auth_gss_allow_basic_fallback on;
+			auth_gss_authorized_principal bob@${KERBEROS_REALM};
+			index /header_wrong.php;
+		}
+
+		location /redirect/header-wrong-negotiate/ {
+			index /header_wrong.php;
+		}
+
+		location /redirect/header-clear-then/ {
+			index /header_clear_then.php;
+		}
+
+		location /redirect/header-bogus/ {
+			index /header_wrong_then.php;
+		}
+
+		location /redirect/basic-to-nobasic/ {
+			auth_gss_allow_basic_fallback on;
+			auth_gss_authorized_principal bob@${KERBEROS_REALM};
+			index /nobasic.php;
+		}
+
+		location /redirect/short-back/ {
+			index /short_back.php;
+		}
+
+		location /redirect/short-back-basic/ {
+			index /short_back_basic.php;
+		}
+
+		location /redirect/short-back-keep/ {
+			index /short_back_keep.php;
+		}
+
+		location /redirect/response-status/ {
+			index /response_status.php;
+		}
+
+		location /redirect/try/ {
+			try_files \$uri /auth.php;
+		}
+		location /redirect/error/ {
+			error_page 404 /auth.php;
+		}
+		location /redirect/basic/ {
+			auth_gss_allow_basic_fallback on;
+			auth_gss_authorized_principal bob@${KERBEROS_REALM};
+			index /fallback.php;
+
+			location /redirect/basic/chain/ {
+				try_files \$uri /redirect/basic/;
+			}
+			location /redirect/basic/refused/ {
+				index /redirect/basic/refused/final;
+				location = /redirect/basic/refused/final {
+					auth_gss_authorized_principal alice@${KERBEROS_REALM};
+					alias /var/www/kerberos/satisfyany;
+				}
+			}
+			location /redirect/basic/recover/ {
+				index /redirect/basic/recover/final;
+				location = /redirect/basic/recover/final {
+					auth_gss_allow_basic_fallback off;
+					error_page 401 = /fallback.php;
+				}
+			}
+			location /redirect/basic/refused-back/ {
+				auth_gss_authorized_principal alice@${KERBEROS_REALM};
+				error_page 403 = /fallback.php;
+			}
+		}
+		location /redirect/basic-different/ {
+			auth_gss_allow_basic_fallback on;
+			auth_gss_authorized_principal bob@${KERBEROS_REALM};
+			auth_gss_map_to_local on;
+			index /fallback.php;
+		}
+		location /redirect/different/ {
+			auth_gss_force_realm on;
+		}
+		location /redirect/different-basic/ {
+			auth_gss_format_full off;
+			auth_gss_authorized_principal alice;
+			index /fallback.php;
+		}
+		location /redirect/denied/ {
+			index /fallback.php;
+		}
+		location /redirect/denied-before/ {
+			auth_gss_authorized_principal bob@${KERBEROS_REALM};
+			error_page 403 = /auth.php;
+		}
+		location /redirect/named/ {
+			try_files \$uri @redirect_auth;
+		}
+		location /redirect/cache/ {
+			auth_gss_allow_basic_fallback on;
+			auth_gss_authorized_principal bob@${KERBEROS_REALM};
+			auth_gss_delegate_credentials on;
+			index /redirect/cache_denied.php;
+		}
+		location = /redirect/cache_denied.php {
+			include fastcgi_params;
+			fastcgi_param SCRIPT_FILENAME /var/www/kerberos/cache_denied.php;
+			fastcgi_pass unix:/run/php/php-fpm.sock;
+			satisfy any;
+			allow all;
+			auth_gss_allow_basic_fallback on;
+			auth_gss_delegate_credentials on;
+			fastcgi_param KRB5CCNAME \$krb5_cc_name;
+		}
+$(redirect_settings_locations redirect)
+		location /redirect/header-same/ {
+			index /header_bogus.php;
+		}
+		location /redirect/via-public/ {
+			index /redirect/via-public/next;
+			location = /redirect/via-public/next {
+				auth_gss off;
+				error_page 418 = /auth.php;
+				return 418;
+			}
+		}
+		location /redirect/error-ok/ {
+			error_page 404 = /auth.php;
+		}
+		location /redirect/relative/ {
+			index index.html;
+		}
+	}
+
+	location @redirect_auth {
+		auth_gss on;
+		auth_gss_realm ${KERBEROS_REALM};
+		auth_gss_keytab /etc/krb5.http.keytab;
+		auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+		auth_gss_allow_basic_fallback off;
+		auth_gss_authorized_principal alice@${KERBEROS_REALM};
+		auth_gss_format_full on;
+		include fastcgi_params;
+		fastcgi_param SCRIPT_FILENAME /var/www/kerberos/noauth.php;
+		fastcgi_pass unix:/run/php/php-fpm.sock;
+	}
+
+	# A filter finishing a response clears the module context.
+	location = /static_ccache {
+		alias /var/www/kerberos/satisfyany;
+$(delegation_settings alice)
+		add_header X-Ccache "\$krb5_cc_name" always;
+	}
+
+	location /static_ccache_redirect/ {
+$(delegation_settings alice)
+		index /static_ccache;
+	}
+
+	location /static_ccache_denied/ {
+$(delegation_settings alice)
+		index /static_ccache_refused;
+	}
+
+	location = /static_ccache_refused {
+		alias /var/www/kerberos/satisfyany;
+		satisfy any;
+		allow all;
+$(delegation_settings bob)
+		add_header X-Ccache "\$krb5_cc_name" always;
+	}
+
 }
 
 # HTTPS server for channel binding tests.
@@ -543,7 +1420,66 @@ server {
                 fastcgi_param HTTP_AUTHORIZATION "";
                 auth_gss_channel_binding exporter;
 	}
+
+	location /cb_redirect/ {
+		auth_gss on;
+		auth_gss_realm ${KERBEROS_REALM};
+		auth_gss_keytab /etc/krb5.http.keytab;
+		auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+		auth_gss_allow_basic_fallback off;
+		auth_gss_format_full on;
+		index /cbinding_sep.php;
+	}
 }
+server {
+	listen 127.0.0.1:8082;
+
+	location = /ccache_check {
+		add_header X-Ccache \$http_x_ccache always;
+		add_header X-Copied-Ccache \$http_x_copied_ccache always;
+		return 200 "backend\n";
+	}
+}
+
+server {
+	listen 8083;
+	listen [::]:8083;
+	server_name ${TEST_HOST_FQDN};
+	root /var/www/kerberos;
+	auth_gss on;
+	auth_gss_realm ${KERBEROS_REALM};
+	auth_gss_keytab /etc/krb5.http.keytab;
+	auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+	auth_gss_allow_basic_fallback off;
+	auth_gss_authorized_principal alice@${KERBEROS_REALM};
+	auth_gss_format_full on;
+	auth_gss_service_ccache /tmp/krb5cc_nginx;
+	auth_gss_delegate_credentials off;
+	set \$early_ccache \$krb5_cc_name;
+
+	location /server_rewrite_ccache/ {
+		auth_gss_delegate_credentials on;
+		auth_gss_constrained_delegation on;
+		index /public.php;
+
+		location /server_rewrite_ccache/clear/ {
+			index /server_rewrite_ccache/cleared;
+		}
+
+		location = /server_rewrite_ccache/cleared {
+			more_clear_input_headers Authorization;
+			error_page 401 = /public.php;
+		}
+	}
+
+	location = /public.php {
+		auth_gss off;
+		proxy_set_header Authorization "";
+		proxy_set_header X-Ccache \$early_ccache;
+		proxy_pass http://127.0.0.1:8082/ccache_check;
+	}
+}
+
 EOF
 then
 	die
@@ -673,8 +1609,122 @@ fi
 echo "OK"
 
 
+printf "Writing short_names.php ... "
+if ! cat <<'EOF' > /var/www/kerberos/short_names.php
+<?php
+	if (!isset($_SERVER["REMOTE_USER"]) || $_SERVER["REMOTE_USER"] !== "alice") {
+		http_response_code(500);
+		echo("Unexpected REMOTE_USER");
+		exit();
+	}
+	echo("Authenticated as " . $_SERVER["REMOTE_USER"]);
+?>
+EOF
+then
+	die
+fi
+echo "OK"
+
+printf "Writing satisfy_no_user.php ... "
+if ! cat <<'EOF' > /var/www/kerberos/satisfy_no_user.php
+<?php
+	if (isset($_SERVER["REMOTE_USER"]) && $_SERVER["REMOTE_USER"] != "") {
+		http_response_code(500);
+		echo("REMOTE_USER set");
+		exit();
+	}
+	echo("REMOTE_USER not set");
+?>
+EOF
+then
+	die
+fi
+echo "OK"
+
+printf "Writing header_bob_basic.php ... "
+if ! cat <<EOF > /var/www/kerberos/header_bob_basic.php
+<?php
+	if (!empty(\$_SERVER["KRB5CCNAME"])) {
+		http_response_code(500);
+		exit();
+	}
+	if (!isset(\$_SERVER["REMOTE_USER"]) || \$_SERVER["REMOTE_USER"] !== "bob@${KERBEROS_REALM}") {
+		http_response_code(500);
+		echo("Unexpected REMOTE_USER");
+		exit();
+	}
+	echo("Authenticated as " . \$_SERVER["REMOTE_USER"]);
+?>
+EOF
+then
+	die
+fi
+echo "OK"
+
 printf "Writing satisfyany static file ... "
 echo "OK" > /var/www/kerberos/satisfyany && echo "OK" || die
+printf "Writing cache_denied.php ... "
+if ! cat <<'EOF' > /var/www/kerberos/cache_denied.php
+<?php
+	if (!empty($_SERVER["KRB5CCNAME"])) {
+		http_response_code(500);
+	}
+?>
+EOF
+then
+	die
+fi
+echo "OK"
+
+printf "Writing redirect test pages ... "
+mkdir -p /var/www/kerberos/redirect/relative || die
+cp /var/www/kerberos/satisfyany /var/www/kerberos/redirect/relative/index.html || die
+printf '<!--#include virtual="/public_delegate.php" -->' > /var/www/kerberos/deny_sub.html || die
+printf '<!--#include virtual="/subrequest_ccache" -->\n' > /var/www/kerberos/delegate_subrequest.html || die
+if ! cat <<'EOF' > /var/www/kerberos/response_status.php
+<?php
+	$status = (int) $_GET["status"];
+	header('X-Test-Status: ' . $status);
+	if ($status == 401) {
+		header('WWW-Authenticate: Basic realm="test"');
+	}
+	http_response_code($status);
+?>
+EOF
+then
+	die
+fi
+if ! cat <<'EOF' > /var/www/kerberos/must_not_run.php
+<?php
+	http_response_code(500);
+	echo("This page must not be reached");
+?>
+EOF
+then
+	die
+fi
+for p in header_same_length header_clear_then short_back short_back_basic short_back_keep delegate_chain_refused; do
+	cp /var/www/kerberos/must_not_run.php "/var/www/kerberos/${p}.php" || die
+done
+for p in header_clear header_wrong header_wrong_then header_bogus short_error; do
+	cp /var/www/kerberos/noauth.php "/var/www/kerberos/${p}.php" || die
+done
+for p in regex_ok regex_refused; do
+	cp /var/www/kerberos/auth.php "/var/www/kerberos/${p}.php" || die
+done
+for p in assigned_ccache_copy deny_copy_no_ccache; do
+	cp /var/www/kerberos/cache_denied.php "/var/www/kerberos/${p}.php" || die
+done
+cp /var/www/kerberos/fallback.php /var/www/kerberos/nobasic.php || die
+cp /var/www/kerberos/delegate.php /var/www/kerberos/delegate_assigned_before.php || die
+cp /var/www/kerberos/delegate.php /var/www/kerberos/public_delegate.php || die
+cp /var/www/kerberos/delegate.php /var/www/kerberos/public_sub_delegate.php || die
+# auth_request uses only the subrequest status, so the page checks alice's identity.
+sed 's/^\techo(\$who);$/\tif ($who !== "dn:uid=alice,cn=gss-spnego,cn=auth") {\n\t\thttp_response_code(500);\n\t\texit();\n\t}\n\techo($who);/' \
+	/var/www/kerberos/delegate.php > /var/www/kerberos/sub_delegate.php || die
+grep -q 'dn:uid=alice,cn=gss-spnego,cn=auth' /var/www/kerberos/sub_delegate.php || die
+echo "OK"
+
 # For example, if php-fpm was already running when libsasl2-modules-gssapi-mit
 # was installed, it won't pick up the new GSSAPI capabilities until it has been
 # restarted...so let's restart all services that might use SASL/GSSAPI in our
@@ -843,6 +1893,67 @@ test_ldapwhoami()
 	fi
 }
 
+curl_transfer_ok()
+{
+	[ "$1" -eq 0 ] || [ "$1" -eq 22 ]
+}
+
+# Curl records every response, so only the final response supplies the headers.
+last_response_headers()
+{
+	awk '/^HTTP\//{b=""} {sub(/\r$/, ""); b=b $0 "\n"} END{printf "%s", b}' "$1"
+}
+
+test_ccache_header()
+{
+	SUBURL="$1"
+	EXPECT_CCACHE="$2"
+	EXPECT_COPY="${3:-}"
+	TMPHEADERS="$(mktemp)"
+
+	printf "curl %s, negotiate: 200 with expected cache=" "${SUBURL}"
+	rm -f "${CURL_OUTPUT}"
+	CURL_RC=0
+	CODE="$($CURL_NEGOTIATE -D "${TMPHEADERS}" -w "%{http_code}" \
+		"http://${TEST_HOST_FQDN}:${4:-8080}/${SUBURL}")" || CURL_RC=$?
+	HEADERS="$(last_response_headers "${TMPHEADERS}")"
+	if curl_transfer_ok "${CURL_RC}" && [ "${CODE}" = "200" ] \
+		&& printf '%s\n' "${HEADERS}" | grep -Eqi "${EXPECT_CCACHE}" \
+		&& { [ -z "${EXPECT_COPY}" ] || printf '%s\n' "${HEADERS}" | grep -Fqxi "${EXPECT_COPY}"; }; then
+		echo "OK"
+	else
+		EX=1
+		echo "FAILED"
+	fi
+	rm -f "${TMPHEADERS}"
+}
+
+test_ccache_after_412()
+{
+	SUBURL="$1"
+	EXPECT_CCACHE="${2:-present}"
+	TMPHEADERS="$(mktemp)"
+
+	printf "curl %s, negotiate, failed If-Match: 412 with cache %s=" "${SUBURL}" "${EXPECT_CCACHE}"
+	rm -f "${CURL_OUTPUT}"
+	CURL_RC=0
+	CODE="$($CURL_NEGOTIATE -H 'If-Match: "x"' -D "${TMPHEADERS}" -w "%{http_code}" \
+		"http://${TEST_HOST_FQDN}:8080/${SUBURL}")" || CURL_RC=$?
+	HEADERS="$(last_response_headers "${TMPHEADERS}")"
+	if curl_transfer_ok "${CURL_RC}" && [ "${CODE}" = "412" ] \
+		&& { if [ "${EXPECT_CCACHE}" = present ]; then
+			printf '%s\n' "${HEADERS}" | grep -Eqi '^X-Ccache: FILE:[^[:space:]]+$'
+		else
+			! printf '%s\n' "${HEADERS}" | grep -qi '^X-Ccache:'
+		fi; }; then
+		echo "OK"
+	else
+		EX=1
+		echo "FAILED"
+	fi
+	rm -f "${TMPHEADERS}"
+}
+
 test_negotiate_token()
 {
 	SUBURL="$1"
@@ -864,6 +1975,166 @@ test_negotiate_token()
 	fi
 	rm -f "${TMPHEADERS}"
 }
+
+
+# Base64 alone does not identify a SPNEGO reply token.
+spnego_reply_tokens()
+{
+	DECODED_TOKEN="$(mktemp)" || return 1
+	TOKEN_RESULT=0
+	for REPLY_TOKEN in $1; do
+		case "${REPLY_TOKEN}" in *[!A-Za-z0-9+/=]*) TOKEN_RESULT=1; break ;; esac
+		[ $(( ${#REPLY_TOKEN} % 4 )) -eq 0 ] || { TOKEN_RESULT=1; break; }
+		if ! printf '%s' "${REPLY_TOKEN}" | base64 -d > "${DECODED_TOKEN}" 2>/dev/null; then
+			TOKEN_RESULT=1
+			break
+		fi
+		case "$(od -An -tx1 -N1 "${DECODED_TOKEN}" | tr -d ' \n')" in
+			a1|60) ;;
+			*) TOKEN_RESULT=1; break ;;
+		esac
+	done
+	rm -f "${DECODED_TOKEN}"
+	return "${TOKEN_RESULT}"
+}
+
+# Reject valid base64 without SPNEGO framing and a reply with invalid base64.
+if spnego_reply_tokens AAAA || spnego_reply_tokens oQA; then
+	die
+fi
+
+test_redirect_token()
+{
+	SUBURL="$1"
+	EXPECT="${2:-200}"
+	EXPECT_TOKEN="${3:-present}"
+	TMPHEADERS="$(mktemp)"
+
+	printf "curl %s, negotiate: WWW-Authenticate token %s in %s=" \
+		"${SUBURL}" "${EXPECT_TOKEN}" "${EXPECT}"
+	rm -f "${CURL_OUTPUT}"
+	CURL_RC=0
+	CODE="$($CURL_NEGOTIATE -D "${TMPHEADERS}" -w "%{http_code}" \
+		"http://${TEST_HOST_FQDN}:8080/${SUBURL}")" || CURL_RC=$?
+
+	if curl_transfer_ok "${CURL_RC}" && [ "${CODE}" = "${EXPECT}" ] \
+		&& TOKEN_VALUES="$(awk -v expected="${EXPECT_TOKEN}" -v marker="${4:-}" '
+		/^HTTP\// { token = 0; values = ""; malformed = 0; challenge = 0; found = (marker == "") }
+		{ line = $0; sub(/\r$/, "", line)
+		  if (line == marker) found = 1
+		  original = line
+		  line = tolower(line)
+		  if (line ~ /^www-authenticate: negotiate[ \t]+[^ \t]/) {
+		      value = line
+		      sub(/^www-authenticate: negotiate[ \t]+/, "", value)
+		      sub(/[ \t]+$/, "", value)
+		      if (value ~ /^[a-z0-9+\/]+(=|==)?$/ && length(value) % 4 == 0)
+		          { token = 1; sub(/^[^:]+: [^ \t]+[ \t]+/, "", original);
+		            sub(/[ \t]+$/, "", original); values = values original "\n" }
+		      else
+		          malformed = 1
+		  }
+		  if (line ~ /^www-authenticate: (basic|negotiate[ \t]*$)/) challenge = 1 }
+		END { if (malformed || !found || token != (expected == "present") || (expected == "present" && challenge)) exit 1; printf "%s", values }
+	' "${TMPHEADERS}")" && spnego_reply_tokens "${TOKEN_VALUES}"; then
+		echo "OK"
+	else
+		EX=1
+		echo "FAILED"
+	fi
+	rm -f "${TMPHEADERS}"
+}
+
+
+test_redirect_challenge()
+{
+	SUBURL="$1"
+	TMPHEADERS="$(mktemp)"
+	printf "curl %s, negotiate: 401 with %s challenge=" "${SUBURL}" "$2"
+	CURL_RC=0
+	CODE="$($CURL_NEGOTIATE -D "${TMPHEADERS}" -w "%{http_code}" \
+		"http://${TEST_HOST_FQDN}:8080/${SUBURL}")" || CURL_RC=$?
+	if curl_transfer_ok "${CURL_RC}" && [ "${CODE}" = 401 ] \
+		&& awk -v expected="$2" -v realm="${KERBEROS_REALM}" '
+		/^HTTP\// { found = 0; extra = 0 }
+		{ line = tolower($0)
+		  sub(/\r$/, "", line)
+		  if (line !~ /^www-authenticate:/) next
+		  if (expected == "Basic")
+		      wanted = "www-authenticate: basic realm=\"" tolower(realm) "\", charset=\"utf-8\""
+		  else
+		      wanted = "www-authenticate: negotiate"
+		  if (line == wanted && expected == "Basic") {
+		      split($0, quoted, "\"")
+		      if (quoted[2] != realm) extra = 1
+		  }
+		  if (line == wanted) found = 1
+		  else extra = 1 }
+		END { exit !(found && !extra) }
+	' "${TMPHEADERS}"; then
+		echo "OK"
+	else
+		EX=1
+		echo "FAILED"
+	fi
+	rm -f "${TMPHEADERS}"
+}
+
+
+# SSI looks up variables by name. A separate configuration keeps krb5_cc_name
+# without indexed storage, which configuration references would allocate.
+printf "Creating nginx site for unindexed variable reads ... "
+cp /etc/nginx/sites-available/kerberos /tmp/kerberos-indexed.conf || die
+cat <<EOF > /etc/nginx/sites-available/kerberos || die
+server {
+	listen 8080;
+	server_name ${TEST_HOST_FQDN};
+	root /var/www/kerberos;
+	ssi on;
+	location = /unindexed.html {
+		auth_gss off;
+	}
+	location = /unindexed_login.html {
+		auth_gss on;
+		auth_gss_realm ${KERBEROS_REALM};
+		auth_gss_keytab /etc/krb5.http.keytab;
+		auth_gss_service_name HTTP/${TEST_HOST_FQDN};
+		auth_gss_allow_basic_fallback off;
+	}
+}
+EOF
+printf 'cache:[<!--#echo var="krb5_cc_name" encoding="none" -->]\n' > /var/www/kerberos/unindexed.html || die
+cp /var/www/kerberos/unindexed.html /var/www/kerberos/unindexed_login.html || die
+systemctl restart nginx || die
+echo "OK"
+printf "Checking configuration has no indexed krb5_cc_name reference ... "
+if grep -RFq '$krb5_cc_name' /etc/nginx/nginx.conf \
+	/etc/nginx/modules-enabled /etc/nginx/conf.d /etc/nginx/sites-enabled; then
+	die
+else
+	[ "$?" -eq 1 ] || die
+fi
+echo "OK"
+kinit -kt krb5.alice.keytab alice || die
+for SSI_PATH in unindexed.html unindexed_login.html; do
+	SSI_RC=0
+	SSI_CODE="$($CURL_NEGOTIATE -w '%{http_code}' \
+		"http://${TEST_HOST_FQDN}:8080/${SSI_PATH}")" || SSI_RC=$?
+	printf 'SSI %s: rc=%s status=%s body=' "${SSI_PATH}" "${SSI_RC}" "${SSI_CODE}"
+	cat "${CURL_OUTPUT}"
+	printf "SSI %s: empty cache body ... " "${SSI_PATH}"
+	if [ "${SSI_RC}" -eq 0 ] && [ "${SSI_CODE}" = 200 ] &&
+		[ "$(cat "${CURL_OUTPUT}")" = 'cache:[]' ]; then
+		echo "OK"
+	else
+		EX=1
+		echo "FAILED"
+	fi
+done
+printf "Restoring nginx site with indexed variable reads ... "
+mv /tmp/kerberos-indexed.conf /etc/nginx/sites-available/kerberos || die
+systemctl restart nginx || die
+echo "OK"
 
 
 printf "Destroying Kerberos tickets ... "
@@ -892,6 +2163,134 @@ test_path "delegate.php" 401 200
 test_ldapwhoami "alice"
 test_path "satisfyany" 401 200
 test_negotiate_token "satisfyany"
+test_path "redirect/" 401 200
+printf "curl redirect/, authenticated username="
+if grep -Fx "Authenticated as alice@${KERBEROS_REALM}" "${CURL_OUTPUT}" > /dev/null; then
+	echo "OK"
+else
+	EX=1
+	echo "FAILED"
+fi
+test_path "redirect/try/missing.html" 401 200
+test_basic "redirect/basic/" 401 200
+test_basic "redirect/basic/chain/missing.html" 401 200
+test_basic "redirect/basic/refused/" 401 403
+test_basic "redirect/basic/recover/" 401 200
+test_basic "redirect/basic/refused-back/" 401 200
+test_basic "redirect/basic-different/" 401 401
+test_redirect_challenge "redirect/different/" "Negotiate"
+test_redirect_challenge "redirect/different-basic/" "Basic"
+test_path "redirect/denied/" 401 403
+test_redirect_token "redirect/denied/" 403 absent
+test_path "redirect/denied-before/" 401 200
+test_path "redirect/named/missing.html" 401 200
+for p in redirect/ redirect/named/missing.html redirect/try/missing.html \
+	redirect/via-public/ redirect/header-same/ \
+	redirect/error-ok/missing.html redirect/relative/; do
+	test_redirect_token "${p}"
+done
+while read -r GROUP NAME DIRECTIVE VALUE; do
+	test_redirect_challenge "${GROUP}/settings/${NAME}/" Negotiate
+done <<EOF
+${REDIRECT_SETTINGS}
+EOF
+test_redirect_token "redirect/challenge_chain/"
+# A direct request confirms that the Basic login created a cache.
+test_basic "redirect/cache_denied.php" 200 500
+test_basic "redirect/cache/" 401 200
+test_path "delegate_chain/" 401 200
+test_ldapwhoami "alice"
+test_basic "delegate_copy_ok/" 401 200
+test_ldapwhoami "bob"
+test_path "delegate_chain/header/" 401 200
+test_basic "delegate_copy_ok/header/" 401 200
+(
+	CURL_NEGOTIATE="${CURL_NEGOTIATE} --delegation always"
+	test_path "delegate_copy_ok/" 401 200
+	test_ldapwhoami "alice"
+	exit "${EX}"
+) || EX=1
+TMPHEADERS="$(mktemp)"
+CURL_RC=0
+CODE="$($CURL_NONEGOTIATE -u "bob:${KRB_BOB_PW}" \
+	-H 'If-Match: "x"' -D "${TMPHEADERS}" -w "%{http_code}" \
+	"http://${TEST_HOST_FQDN}:8080/challenge_reuse/")" || CURL_RC=$?
+if [ "${CURL_RC}" -eq 0 ] && [ "${CODE}" = 302 ] &&
+	tr -d '\r' < "${TMPHEADERS}" |
+	grep -Fx "Location: http://${TEST_HOST_FQDN}:8080/redirect-target" > /dev/null; then
+	echo "challenge cleanup preserves Location ... OK"
+else
+	EX=1
+	echo "challenge cleanup preserves Location ... FAILED"
+fi
+rm -f "${TMPHEADERS}"
+test_path "delegate_public/" 401 200
+test_ldapwhoami "alice"
+test_ccache_header "delegate_clear_public/" '^X-Ccache: FILE:[^[:space:]]+$'
+test_redirect_token "delegate_clear_public/" 200 absent
+test_path "delegate_public_sub/" 401 200
+test_ldapwhoami "alice"
+test_path "delegate_sub_refused/" 401 200
+test_ldapwhoami "alice"
+test_path "delegate_sub_refused/wrong/" 401 200
+test_ldapwhoami "alice"
+test_ccache_header "server_rewrite_ccache/" '^X-Ccache: FILE:[^[:space:]]+$' '' 8083
+test_ccache_header "server_rewrite_ccache/clear/" '^X-Ccache: FILE:[^[:space:]]+$' '' 8083
+test_ccache_header "delegate_hidden/" '^X-Ccache: FILE:[^[:space:]]+$' 'X-Copied-Ccache: before:'
+test_ccache_after_412 "static_ccache"
+test_ccache_after_412 "static_ccache_redirect/"
+test_ccache_after_412 "static_ccache_denied/" absent
+test_path "delegate_assigned_before.php" 401 200
+test_ldapwhoami "alice"
+test_path "delegate_subrequest.html" 401 200
+printf "curl delegate_subrequest.html, delegated cache in subrequest="
+if grep -Eq '^FILE:[^[:space:]]+$' "${CURL_OUTPUT}"; then
+	echo "OK"
+else
+	EX=1
+	echo "FAILED"
+fi
+test_path "assigned_ccache_redirect/" 401 200
+test_redirect_token "assigned_ccache_redirect/" 200 absent
+test_ccache_header "assigned_ccache_kept/" '^X-Ccache: FILE:/tmp/destination-cache$' \
+	'X-Copied-Ccache: before:FILE:/tmp/destination-cache'
+test_ccache_header "assigned_ccache_auth_request" '^X-Ccache: FILE:/tmp/destination-cache$'
+test_path "delegate_deny_copy/" 401 200
+test_redirect_token "delegate_deny_copy/" 200 absent
+test_path "delegate_deny_named/" 401 200
+test_ccache_header "delegate_assigned/" '^X-Ccache: FILE:/tmp/destination-cache$' \
+	'X-Copied-Ccache: before:FILE:/tmp/destination-cache'
+test_ccache_header "delegate_assigned_ok/" '^X-Ccache: FILE:/tmp/destination-cache$' \
+	'X-Copied-Ccache: before:FILE:/tmp/destination-cache'
+test_path "header_same_length/" 401 401
+test_basic "redirect/header-clear/" 401 401
+test_path "redirect/header-clear/" 401 401
+test_basic "redirect/header-wrong/" 401 401
+test_path "redirect/header-wrong-negotiate/" 401 401
+test_path "redirect/header-clear-then/" 401 200
+test_path "redirect/header-bogus/" 401 401
+test_basic "redirect/basic-to-nobasic/" 401 401
+test_path "redirect/error/missing.html" 401 404
+printf "curl redirect/error/missing.html, /auth.php served ... "
+if grep -Fx "Authenticated as alice@${KERBEROS_REALM}" "${CURL_OUTPUT}" > /dev/null; then
+	echo "OK"
+else
+	EX=1
+	echo "FAILED"
+fi
+test_redirect_token "redirect/error/missing.html" 404
+test_path "redirect/regex-ok/" 401 200
+test_path "redirect/regex-refused/" 401 403
+test_path "redirect/satisfy-user/" 401 200
+test_redirect_token "redirect/short-names/"
+test_redirect_token "redirect/short-error/" 401 absent
+test_path "redirect/short-back/" 401 200
+test_redirect_token "redirect/short-back/"
+test_path "redirect/short-back-basic/" 401 200
+test_redirect_token "redirect/short-back-basic/"
+test_redirect_challenge "redirect/short-back-keep/" "Negotiate"
+test_redirect_token "redirect/response-status/?status=401" 401 absent 'X-Test-Status: 401'
+test_redirect_token "redirect/response-status/?status=403" 403 absent 'X-Test-Status: 403'
 
 
 echo ""
@@ -1022,6 +2421,7 @@ test_path "cbinding_sep.php" 401 500
 echo ""
 echo "--- HTTPS connectivity sanity check ---"
 test_https_path "noauth.php" 200 200
+test_https_path "cb_redirect/" 401 401
 
 echo ""
 echo "--- HTTPS + auth_gss_channel_binding server-end-point ---"
