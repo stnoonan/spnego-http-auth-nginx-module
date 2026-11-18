@@ -31,6 +31,13 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 
+#if (NGX_WIN32) && defined(_MSC_VER)
+/* nginx defines _OFF_T_DEFINED (for its own 64-bit off_t), which stops the
+ * Windows SDK's <sys/types.h> from declaring _off_t. MIT Kerberos for
+ * Windows' headers include <sys/stat.h>, which needs it. */
+typedef long _off_t;
+#endif
+
 #include <gssapi/gssapi.h>
 #include <gssapi/gssapi_ext.h>
 #include <gssapi/gssapi_krb5.h>
