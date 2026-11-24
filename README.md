@@ -222,6 +222,18 @@ Because Firefox and Chrome on Linux do not support channel bindings, setting
 Restrict this directive to deployments where all clients are known to have
 proper support for channel bindings.
 
+Nego2
+-----
+
+This module optionally supports the `Nego2` variant from
+[\[MS-N2HT\]](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-n2ht/4b88aa77-4b12-4933-8740-0f32d8f4eacf)
+which allows to prevent compatible clients from trying a NTLM fallback in case
+the Kerberos layer fails. Support for this feature on the client side is
+however currently limited.
+
+To enable it, add the following
+
+    auth_gss_support_nego2 true;
 
 Troubleshooting
 ---------------

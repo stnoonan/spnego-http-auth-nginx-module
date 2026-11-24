@@ -58,6 +58,25 @@ typedef long _off_t;
 #define SHM_ZONE_NAME "shm_zone"
 #define RENEWAL_TIME 60
 
+#define NEGOTIATE_AUTH_SCHEME "Negotiate"
+#define NEGO2_AUTH_SCHEME     "Nego2"
+
+/*
+ * Base64-encoded NegTokenInit2 for the initial Nego2 challenge.
+ *
+ * This announces the two OIDs of Kerberos (the legacy one and the
+ * modern one), so that a Windows client knows our SPNEGO does not support
+ * NTLM, and doesn't try sending it.
+ *
+ * To debug it:
+ * $ scapy
+ * >>> import base64
+ * >>> GSSAPI_BLOB(base64.b64decode("YFIGB...."))
+ */
+#define NEGO2_INITIAL_TOKEN                                                   \
+    "YFIGBisGAQUFAqBIMEagGDAWBgkqhkiC9xIBAgIGCSqGSIb3EgECAqMqMCigJhsk"          \
+    "bm90X2RlZmluZWRfaW5fUkZDNDE3OEBwbGVhc2VfaWdub3Jl"
+
 /* Values for the auth_gss_channel_binding directive. */
 #define NGX_HTTP_AUTH_SPNEGO_CB_OFF       0
 #define NGX_HTTP_AUTH_SPNEGO_CB_SERVER_EP 1
@@ -153,17 +172,18 @@ typedef struct {
 
 /* per request */
 typedef struct {
-    ngx_str_t token;             /* decoded Negotiate token */
-    ngx_int_t head;              /* non-zero flag if headers set */
-    ngx_int_t ret;               /* current return code */
-    ngx_str_t token_out_b64;     /* base64 encoded output token */
-    ngx_str_t user;              /* authenticated username */
-    ngx_str_t authorization_set; /* copy of the header value after login */
-    ngx_str_t ccache;            /* delegated cache name, kept across refusals */
-    ngx_uint_t redirected;       /* the saved login reached another access check */
-    ngx_uint_t uri_changes;      /* r->uri_changes when saved or last reused */
-    ngx_table_elt_t *challenge;  /* challenge kept across redirects */
-    ngx_str_t challenge_value;   /* detects a reused header list entry */
+    ngx_str_t token;               /* decoded Negotiate token */
+    ngx_int_t head;                /* non-zero flag if headers set */
+    ngx_int_t ret;                 /* current return code */
+    ngx_str_t token_out_b64;       /* base64 encoded output token */
+    ngx_str_t user;                /* authenticated username */
+    ngx_str_t authorization_set;   /* copy of the header value after login */
+    ngx_str_t ccache;              /* delegated cache name, kept across refusals */
+    ngx_uint_t redirected;         /* the saved login reached another access check */
+    ngx_uint_t uri_changes;        /* r->uri_changes when saved or last reused */
+    ngx_table_elt_t *challenge[2]; /* challenge kept across redirects */
+    ngx_str_t challenge_value[2];  /* detects reused header list entries */
+    ngx_flag_t is_nego2;           /* uses the Nego2 variant */
     struct ngx_http_auth_spnego_loc_conf_s *alcf; /* NULL discards the login */
 } ngx_http_auth_spnego_ctx_t;
 
@@ -181,6 +201,7 @@ typedef struct ngx_http_auth_spnego_loc_conf_s {
     ngx_flag_t fqun;                  /* include @realm in $remote_user */
     ngx_flag_t force_realm;           /* strip/replace principal's realm */
     ngx_flag_t allow_basic;           /* allow Basic auth fallback */
+    ngx_flag_t support_nego2;         /* support the Nego2 variant */
     ngx_array_t *auth_princs;         /* authorized principals */
 #if (NGX_PCRE)
     ngx_array_t *auth_princs_regex;   /* regexes matching authorized principals */
@@ -254,6 +275,10 @@ static ngx_command_t ngx_http_auth_spnego_commands[] = {
     {ngx_string("auth_gss_allow_basic_fallback"), SPNEGO_NGX_CONF_FLAGS,
      ngx_conf_set_flag_slot, NGX_HTTP_LOC_CONF_OFFSET,
      offsetof(ngx_http_auth_spnego_loc_conf_t, allow_basic), NULL},
+
+    {ngx_string("auth_gss_support_nego2"), SPNEGO_NGX_CONF_FLAGS,
+     ngx_conf_set_flag_slot, NGX_HTTP_LOC_CONF_OFFSET,
+     offsetof(ngx_http_auth_spnego_loc_conf_t, support_nego2), NULL},
 
     {ngx_string("auth_gss_authorized_principal"),
      SPNEGO_NGX_CONF_FLAGS | NGX_CONF_1MORE, ngx_conf_set_str_array_slot,
@@ -379,6 +404,7 @@ static void *ngx_http_auth_spnego_create_loc_conf(ngx_conf_t *cf) {
     conf->fqun = NGX_CONF_UNSET;
     conf->force_realm = NGX_CONF_UNSET;
     conf->allow_basic = NGX_CONF_UNSET;
+    conf->support_nego2 = NGX_CONF_UNSET;
     conf->auth_princs = NGX_CONF_UNSET_PTR;
 #if (NGX_PCRE)
     conf->auth_princs_regex = NGX_CONF_UNSET_PTR;
@@ -467,6 +493,7 @@ static char *ngx_http_auth_spnego_merge_loc_conf(ngx_conf_t *cf, void *parent,
     ngx_conf_merge_off_value(conf->fqun, prev->fqun, 0);
     ngx_conf_merge_off_value(conf->force_realm, prev->force_realm, 0);
     ngx_conf_merge_off_value(conf->allow_basic, prev->allow_basic, 1);
+    ngx_conf_merge_off_value(conf->support_nego2, prev->support_nego2, 0);
 
     if (!conf->realm.len) {
         krb5_context kctx;
@@ -593,6 +620,8 @@ static char *ngx_http_auth_spnego_merge_loc_conf(ngx_conf_t *cf, void *parent,
                        conf->fqun);
     ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0, "auth_spnego: allow_basic = %i",
                        conf->allow_basic);
+    ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0, "auth_spnego: support_nego2 = %i",
+                       conf->support_nego2);
     ngx_conf_log_error(NGX_LOG_DEBUG, cf, 0, "auth_spnego: force_realm = %i",
                        conf->force_realm);
 
@@ -909,12 +938,23 @@ ngx_http_auth_spnego_header_filter(ngx_http_request_t *r)
         }
     }
 
-    value.len = sizeof("Negotiate ") - 1 + ctx->token_out_b64.len;
-    value.data = ngx_pnalloc(r->pool, value.len);
-    if (value.data == NULL) {
-        return NGX_ERROR;
+    if (ctx->is_nego2) {
+        /* Nego2 */
+        value.len = sizeof(NEGO2_AUTH_SCHEME " ") - 1 + ctx->token_out_b64.len;
+        value.data = ngx_pnalloc(r->pool, value.len);
+        if (value.data == NULL) {
+            return NGX_ERROR;
+        }
+        ngx_snprintf(value.data, value.len, NEGO2_AUTH_SCHEME " %V", &ctx->token_out_b64);
+    } else {
+        /* Negotiate */
+        value.len = sizeof(NEGOTIATE_AUTH_SCHEME " ") - 1 + ctx->token_out_b64.len;
+        value.data = ngx_pnalloc(r->pool, value.len);
+        if (value.data == NULL) {
+            return NGX_ERROR;
+        }
+        ngx_snprintf(value.data, value.len, NEGOTIATE_AUTH_SCHEME " %V", &ctx->token_out_b64);
     }
-    ngx_snprintf(value.data, value.len, "Negotiate %V", &ctx->token_out_b64);
 
     if (ngx_http_auth_spnego_add_www_authenticate(r, &value, 1) != NGX_OK) {
         return NGX_ERROR;
@@ -978,26 +1018,47 @@ ngx_http_auth_spnego_headers_basic_only(ngx_http_request_t *r,
 static ngx_int_t
 ngx_http_auth_spnego_headers(ngx_http_request_t *r,
                              ngx_http_auth_spnego_ctx_t *ctx, ngx_str_t *token,
-                             ngx_http_auth_spnego_loc_conf_t *alcf) {
+                             ngx_http_auth_spnego_loc_conf_t *alcf,
+                             ngx_flag_t send_nego2) {
     ngx_str_t value = ngx_null_string;
 
-    if (token == NULL) {
-        value.len = sizeof("Negotiate") - 1;
-        value.data = (u_char *)"Negotiate";
-    } else {
-        value.len = sizeof("Negotiate") + token->len; /* \0 used for space */
-        value.data = ngx_pcalloc(r->pool, value.len);
-        if (value.data == NULL) {
-            return NGX_ERROR;
+    if (send_nego2) {
+        /* Nego2 variant as per [MS-N2HT]. */
+        if (token == NULL) {
+            /*
+             * When token is NULL, we send a NegTokenInit2 as explained in
+             * https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-spng/a7c56e20-0bac-4310-880a-6dd16c7c0d37
+             * and [MS-N2HT]
+             */
+            ngx_str_set(&value, NEGO2_AUTH_SCHEME " " NEGO2_INITIAL_TOKEN);
+        } else {
+            value.len = sizeof(NEGO2_AUTH_SCHEME) + token->len; /* \0 used for space */
+            value.data = ngx_pcalloc(r->pool, value.len);
+            if (value.data == NULL) {
+                return NGX_ERROR;
+            }
+            ngx_snprintf(value.data, value.len, NEGO2_AUTH_SCHEME " %V", token);
         }
-        ngx_snprintf(value.data, value.len, "Negotiate %V", token);
+    } else {
+        /* Negotiate */
+        if (token == NULL) {
+            value.len = sizeof(NEGOTIATE_AUTH_SCHEME) - 1;
+            value.data = (u_char *)NEGOTIATE_AUTH_SCHEME;
+        } else {
+            value.len = sizeof(NEGOTIATE_AUTH_SCHEME) + token->len; /* \0 used for space */
+            value.data = ngx_pcalloc(r->pool, value.len);
+            if (value.data == NULL) {
+                return NGX_ERROR;
+            }
+            ngx_snprintf(value.data, value.len, NEGOTIATE_AUTH_SCHEME " %V", token);
+        }
     }
 
     if (ngx_http_auth_spnego_add_www_authenticate(r, &value, 1) != NGX_OK) {
         return NGX_ERROR;
     }
 
-    if (alcf->allow_basic) {
+    if (!send_nego2 && alcf->allow_basic) {
         if (ngx_http_auth_spnego_add_basic_header(r, alcf, 2) != NGX_OK) {
             return NGX_ERROR;
         }
@@ -1056,7 +1117,8 @@ ngx_int_t ngx_http_auth_spnego_token(ngx_http_request_t *r,
                                      ngx_http_auth_spnego_ctx_t *ctx) {
     ngx_str_t token;
     ngx_str_t decoded;
-    size_t nego_sz = sizeof("Negotiate");
+    size_t nego_sz  = sizeof(NEGOTIATE_AUTH_SCHEME);
+    size_t nego2_sz = sizeof(NEGO2_AUTH_SCHEME);
 
     if (r->headers_in.authorization == NULL) {
         return NGX_DECLINED;
@@ -1068,13 +1130,21 @@ ngx_int_t ngx_http_auth_spnego_token(ngx_http_request_t *r,
 
     token = r->headers_in.authorization->value;
 
-    if (token.len < nego_sz ||
-        ngx_strncasecmp(token.data, (u_char *)"Negotiate ", nego_sz) != 0) {
+    if (token.len >= nego_sz &&
+        ngx_strncasecmp(token.data, (u_char *)NEGOTIATE_AUTH_SCHEME " ", nego_sz) == 0) {
+            /* Negotiate */
+            ctx->is_nego2 = false;
+            token.len -= nego_sz;
+            token.data += nego_sz;
+    } else if (token.len >= nego2_sz &&
+        ngx_strncasecmp(token.data, (u_char *)NEGO2_AUTH_SCHEME " ", nego2_sz) == 0) {
+            /* Nego2 */
+            ctx->is_nego2 = true;
+            token.len -= nego2_sz;
+            token.data += nego2_sz;
+    } else {
         return NGX_DECLINED;
     }
-
-    token.len -= nego_sz;
-    token.data += nego_sz;
 
     while (token.len && token.data[0] == ' ') {
         token.len--;
@@ -1097,7 +1167,9 @@ ngx_int_t ngx_http_auth_spnego_token(ngx_http_request_t *r,
 
     ctx->token.len = decoded.len;
     ctx->token.data = decoded.data;
-    spnego_debug1("Token (base64), length: %uz", token.len);
+    spnego_debug2("Token %s (base64), length: %uz",
+                  ctx->is_nego2 ? NEGO2_AUTH_SCHEME : NEGOTIATE_AUTH_SCHEME,
+                  token.len);
 
     return NGX_OK;
 }
@@ -2277,33 +2349,38 @@ ngx_http_auth_spnego_same_authorization(ngx_http_request_t *r,
 }
 
 
-/* Remove the saved login's challenge. ngx_http_auth_spnego_restore_login
+/* Remove the saved login's challenges. ngx_http_auth_spnego_restore_login
  * decides whether to keep it for a retained 401. nginx can reuse a header
  * list entry after clearing headers, so both the name and saved value must
  * match before suppressing it. */
 static void
 ngx_http_auth_spnego_clear_challenge(ngx_http_request_t *r,
                                      ngx_http_auth_spnego_ctx_t *ctx) {
-    ngx_table_elt_t *h = ctx->challenge;
+    ngx_table_elt_t *h;
+    ngx_uint_t i;
 
-    if (h == NULL) {
-        return;
-    }
-    if (h->key.len       == sizeof("WWW-Authenticate") - 1
-        && ngx_strncasecmp(h->key.data, (u_char *)"WWW-Authenticate",
-                           sizeof("WWW-Authenticate") - 1) == 0
-        && h->value.data == ctx->challenge_value.data
-        && h->value.len  == ctx->challenge_value.len) {
-        h->hash = 0;
-        if (r->headers_out.www_authenticate == h) {
-#if defined(nginx_version) && nginx_version >= 1023000
-            r->headers_out.www_authenticate = h->next;
-#else
-            r->headers_out.www_authenticate = NULL;
-#endif
+    for (i = 0; i < 2; i++) {
+        h = ctx->challenge[i];
+        if (h == NULL) {
+            continue;
         }
+        if (h->key.len       == sizeof("WWW-Authenticate") - 1
+            && ngx_strncasecmp(h->key.data, (u_char *)"WWW-Authenticate",
+                               sizeof("WWW-Authenticate") - 1) == 0
+            && h->value.data == ctx->challenge_value[i].data
+            && h->value.len  == ctx->challenge_value[i].len) {
+            h->hash = 0;
+            if (r->headers_out.www_authenticate == h) {
+#if defined(nginx_version) && nginx_version >= 1023000
+                r->headers_out.www_authenticate = h->next;
+#else
+                r->headers_out.www_authenticate = NULL;
+#endif
+            }
+        }
+        ctx->challenge[i] = NULL;
+        ngx_str_null(&ctx->challenge_value[i]);
     }
-    ctx->challenge = NULL;
 }
 
 
@@ -2315,20 +2392,30 @@ static ngx_int_t
 ngx_http_auth_spnego_challenge_again(ngx_http_request_t *r,
                                      ngx_http_auth_spnego_ctx_t *ctx,
                                      ngx_http_auth_spnego_loc_conf_t *alcf) {
-    ngx_int_t ret;
+    ngx_int_t ret = NGX_OK;
 
     ngx_http_auth_spnego_clear_challenge(r, ctx);
     ngx_str_set(&r->headers_in.user, "");
     if (alcf->allow_basic) {
         ret = ngx_http_auth_spnego_headers_basic_only(r, ctx, alcf);
     } else {
-        ret = ngx_http_auth_spnego_headers(r, ctx, NULL, alcf);
+        /* Append Nego2 */
+        if (alcf->support_nego2) {
+            ret = ngx_http_auth_spnego_headers(r, ctx, NULL, alcf, true);
+            if (ret == NGX_OK) {
+                ctx->challenge[1] = r->headers_out.www_authenticate;
+                ctx->challenge_value[1] = ctx->challenge[1]->value;
+            }
+        }
+        /* Append Negotiate */
+        if (ret == NGX_OK)
+            ret = ngx_http_auth_spnego_headers(r, ctx, NULL, alcf, false);
     }
     if (ret == NGX_ERROR) {
         return (ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR);
     }
-    ctx->challenge = r->headers_out.www_authenticate;
-    ctx->challenge_value = ctx->challenge->value;
+    ctx->challenge[0] = r->headers_out.www_authenticate;
+    ctx->challenge_value[0] = ctx->challenge[0]->value;
     if (alcf->allow_basic) {
         return (ctx->ret = NGX_HTTP_UNAUTHORIZED);
     }
@@ -2491,7 +2578,13 @@ ngx_http_auth_spnego_negotiate(ngx_http_request_t *r,
 
     switch (ret) {
     case NGX_DECLINED: /* DECLINED, but not yet FORBIDDEN */
-        if (ngx_http_auth_spnego_headers(r, ctx, NULL, alcf) == NGX_ERROR) {
+        /* Append Nego2 */
+        if (alcf->support_nego2)
+            ret = ngx_http_auth_spnego_headers(r, ctx, NULL, alcf, true);
+        /* Append Negotiate */
+        if (ret != NGX_ERROR)
+            ret = ngx_http_auth_spnego_headers(r, ctx, NULL, alcf, false);
+        if (ret == NGX_ERROR) {
             spnego_debug0("Error setting headers");
             ctx->ret = NGX_HTTP_INTERNAL_SERVER_ERROR;
         } else {
